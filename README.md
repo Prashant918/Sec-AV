@@ -15,9 +15,7 @@ This project introduces a powerful command-line tool designed to create and dete
 - The software will be released soon.
 - Stay tuned for updates and detailed documentation.
 
-
-
----------------------------------------------------------------------X=X-----------------------------------------------------------------------
+---------------------------------------------X=X----------------------------------------------
 
 # Prashant918 Advanced Antivirus - Complete Installation, Setup & Usage Guide
 
