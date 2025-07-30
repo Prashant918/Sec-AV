@@ -1,8 +1,6 @@
 """
-Prashant918 Advanced Antivirus - Quarantine Manager
-
-Advanced quarantine system with encryption, integrity verification,
-and secure file management capabilities.
+Prashant918 Advanced Antivirus - Enhanced Quarantine Manager
+Advanced quarantine system with encryption, integrity verification, and secure file management
 """
 
 import os
@@ -11,584 +9,819 @@ import hashlib
 import json
 import time
 import threading
+import sqlite3
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import base64
+from dataclasses import dataclass, field
+from enum import Enum
 
-from ..logger import SecureLogger
-from ..config import secure_config
-from ..database import db_manager
-from ..exceptions import QuarantineError, QuarantineAccessError, ValidationError
-from ..utils import calculate_file_hash, sanitize_filename, create_secure_temp_file
+# Encryption imports with error handling
+try:
+    from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    import base64
+    HAS_CRYPTOGRAPHY = True
+except ImportError:
+    HAS_CRYPTOGRAPHY = False
+    Fernet = None
 
+# Core imports with error handling
+try:
+    from ..logger import SecureLogger
+except ImportError:
+    import logging
+    SecureLogger = logging.getLogger
+
+try:
+    from ..config import secure_config
+except ImportError:
+    secure_config = type('Config', (), {'get': lambda self, key, default=None: default})()
+
+try:
+    from ..exceptions import QuarantineError, QuarantineAccessError, ValidationError
+except ImportError:
+    class QuarantineError(Exception): pass
+    class QuarantineAccessError(QuarantineError): pass
+    class ValidationError(Exception): pass
+
+try:
+    from ..utils import calculate_file_hash, sanitize_filename, create_secure_temp_file
+except ImportError:
+    def calculate_file_hash(file_path, algorithm='sha256'):
+        """Fallback hash calculation"""
+        hash_obj = hashlib.new(algorithm)
+        try:
+            with open(file_path, 'rb') as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hash_obj.update(chunk)
+            return hash_obj.hexdigest()
+        except Exception:
+            return None
+    
+    def sanitize_filename(filename):
+        """Fallback filename sanitization"""
+        import re
+        return re.sub(r'[<>:"/\\|?*]', '_', filename)
+    
+    def create_secure_temp_file():
+        """Fallback temp file creation"""
+        import tempfile
+        return tempfile.NamedTemporaryFile(delete=False)
+
+class QuarantineStatus(Enum):
+    """Quarantine item status"""
+    QUARANTINED = "quarantined"
+    RESTORED = "restored"
+    DELETED = "deleted"
+    CORRUPTED = "corrupted"
+
+@dataclass
+class QuarantineItem:
+    """Quarantine item data structure"""
+    id: str
+    original_path: str
+    quarantine_path: str
+    file_hash: str
+    file_size: int
+    threat_name: str
+    detection_method: str
+    quarantine_time: datetime
+    status: QuarantineStatus = QuarantineStatus.QUARANTINED
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    restore_count: int = 0
+    last_accessed: Optional[datetime] = None
 
 class QuarantineEncryption:
-    """Handle encryption/decryption for quarantined files"""
+    """Enhanced quarantine file encryption with fallback support"""
     
-    def __init__(self):
+    def __init__(self, password: Optional[str] = None):
         self.logger = SecureLogger("QuarantineEncryption")
-        self.key_file = "config/.quarantine_key"
         self.cipher_suite = None
-        self._initialize_encryption()
+        self.encryption_enabled = HAS_CRYPTOGRAPHY
+        
+        if self.encryption_enabled:
+            self._initialize_encryption(password)
+        else:
+            self.logger.warning("Cryptography library not available - files will not be encrypted")
     
-    def _initialize_encryption(self):
-        """Initialize encryption system"""
+    def _initialize_encryption(self, password: Optional[str] = None):
+        """Initialize encryption with password"""
         try:
-            if not os.path.exists(self.key_file):
-                self._generate_key()
+            if not password:
+                password = "default_quarantine_key_2024"
             
-            with open(self.key_file, 'rb') as f:
-                key = f.read()
+            # Generate key from password
+            password_bytes = password.encode()
+            salt = b'quarantine_salt_2024'  # In production, use random salt
             
-            self.cipher_suite = Fernet(key)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to initialize quarantine encryption: {e}")
-            raise QuarantineError(f"Encryption initialization failed: {e}")
-    
-    def _generate_key(self):
-        """Generate new encryption key"""
-        try:
-            # Generate random password
-            password = os.urandom(32)
-            salt = os.urandom(16)
-            
-            # Derive key using PBKDF2
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=32,
                 salt=salt,
                 iterations=100000,
             )
-            key = base64.urlsafe_b64encode(kdf.derive(password))
             
-            # Ensure config directory exists
-            os.makedirs(os.path.dirname(self.key_file), exist_ok=True)
+            key = base64.urlsafe_b64encode(kdf.derive(password_bytes))
+            self.cipher_suite = Fernet(key)
             
-            # Save key with secure permissions
-            with open(self.key_file, 'wb') as f:
-                f.write(key)
-            
-            os.chmod(self.key_file, 0o600)
+            self.logger.info("Quarantine encryption initialized successfully")
             
         except Exception as e:
-            self.logger.error(f"Failed to generate quarantine key: {e}")
-            raise QuarantineError(f"Key generation failed: {e}")
+            self.logger.error(f"Failed to initialize encryption: {e}")
+            self.encryption_enabled = False
     
-    def encrypt_file(self, source_path: str, dest_path: str) -> bool:
-        """Encrypt file for quarantine"""
+    def encrypt_file(self, source_path: str, destination_path: str) -> bool:
+        """Encrypt file to quarantine"""
         try:
+            if not self.encryption_enabled:
+                # Fallback: just copy the file
+                shutil.copy2(source_path, destination_path)
+                return True
+            
             with open(source_path, 'rb') as src_file:
                 file_data = src_file.read()
             
             encrypted_data = self.cipher_suite.encrypt(file_data)
             
-            with open(dest_path, 'wb') as dest_file:
-                dest_file.write(encrypted_data)
+            with open(destination_path, 'wb') as dst_file:
+                dst_file.write(encrypted_data)
             
-            # Set secure permissions
-            os.chmod(dest_path, 0o600)
+            # Set restrictive permissions
+            if hasattr(os, 'chmod'):
+                os.chmod(destination_path, 0o600)
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Failed to encrypt file {source_path}: {e}")
+            self.logger.error(f"File encryption failed: {e}")
             return False
     
-    def decrypt_file(self, source_path: str, dest_path: str) -> bool:
+    def decrypt_file(self, source_path: str, destination_path: str) -> bool:
         """Decrypt file from quarantine"""
         try:
+            if not self.encryption_enabled:
+                # Fallback: just copy the file
+                shutil.copy2(source_path, destination_path)
+                return True
+            
             with open(source_path, 'rb') as src_file:
                 encrypted_data = src_file.read()
             
             decrypted_data = self.cipher_suite.decrypt(encrypted_data)
             
-            with open(dest_path, 'wb') as dest_file:
-                dest_file.write(decrypted_data)
+            with open(destination_path, 'wb') as dst_file:
+                dst_file.write(decrypted_data)
             
             return True
             
         except Exception as e:
-            self.logger.error(f"Failed to decrypt file {source_path}: {e}")
+            self.logger.error(f"File decryption failed: {e}")
             return False
-
+    
+    def is_encryption_enabled(self) -> bool:
+        """Check if encryption is enabled"""
+        return self.encryption_enabled
 
 class QuarantineManager:
-    """Advanced quarantine management system"""
+    """Enhanced quarantine manager with comprehensive file management"""
     
-    def __init__(self):
+    def __init__(self, quarantine_dir: Optional[str] = None):
         self.logger = SecureLogger("QuarantineManager")
-        self.quarantine_dir = "quarantine"
-        self.metadata_dir = os.path.join(self.quarantine_dir, ".metadata")
+        
+        # Set up quarantine directory
+        if quarantine_dir:
+            self.quarantine_dir = Path(quarantine_dir)
+        else:
+            home_dir = Path.home()
+            self.quarantine_dir = home_dir / ".prashant918_antivirus" / "quarantine"
+        
+        self.quarantine_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set up database
+        self.db_path = self.quarantine_dir / "quarantine.db"
+        self.db_lock = threading.Lock()
+        
+        # Initialize encryption
         self.encryption = QuarantineEncryption()
-        self.lock = threading.Lock()
         
         # Configuration
         self.max_quarantine_size = secure_config.get("quarantine.max_size", 1024 * 1024 * 1024)  # 1GB
         self.retention_days = secure_config.get("quarantine.retention_days", 30)
-        self.auto_cleanup = secure_config.get("quarantine.auto_cleanup", True)
+        self.auto_cleanup_enabled = secure_config.get("quarantine.auto_cleanup", True)
         
-        self._initialize_quarantine_dir()
+        # Statistics
+        self.stats = {
+            'total_quarantined': 0,
+            'total_restored': 0,
+            'total_deleted': 0,
+            'current_size': 0,
+            'last_cleanup': None
+        }
         
-        if self.auto_cleanup:
-            self._start_cleanup_thread()
+        # Initialize database and load stats
+        self._initialize_database()
+        self._load_statistics()
+        
+        # Set secure permissions
+        self._set_secure_permissions()
     
-    def _initialize_quarantine_dir(self):
-        """Initialize quarantine directory structure"""
+    def _set_secure_permissions(self):
+        """Set secure permissions on quarantine directory"""
         try:
-            os.makedirs(self.quarantine_dir, exist_ok=True)
-            os.makedirs(self.metadata_dir, exist_ok=True)
+            if hasattr(os, 'chmod') and os.name != 'nt':
+                os.chmod(self.quarantine_dir, 0o700)
+        except (OSError, PermissionError) as e:
+            self.logger.warning(f"Could not set secure permissions: {e}")
+    
+    def _initialize_database(self):
+        """Initialize quarantine database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                # Create quarantine items table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS quarantine_items (
+                        id TEXT PRIMARY KEY,
+                        original_path TEXT NOT NULL,
+                        quarantine_path TEXT NOT NULL,
+                        file_hash TEXT NOT NULL,
+                        file_size INTEGER NOT NULL,
+                        threat_name TEXT NOT NULL,
+                        detection_method TEXT NOT NULL,
+                        quarantine_time TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'quarantined',
+                        metadata TEXT DEFAULT '{}',
+                        restore_count INTEGER DEFAULT 0,
+                        last_accessed TEXT
+                    )
+                ''')
+                
+                # Create statistics table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS quarantine_stats (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                ''')
+                
+                # Create indexes for better performance
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_quarantine_time 
+                    ON quarantine_items(quarantine_time)
+                ''')
+                
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_status 
+                    ON quarantine_items(status)
+                ''')
+                
+                conn.commit()
+                conn.close()
+                
+                self.logger.info("Quarantine database initialized successfully")
+                
+        except Exception as e:
+            self.logger.error(f"Database initialization failed: {e}")
+            raise QuarantineError(f"Failed to initialize quarantine database: {e}")
+    
+    def quarantine_file(self, file_path: str, threat_name: str, detection_method: str, 
+                       metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """Quarantine a file"""
+        try:
+            file_path = Path(file_path).resolve()
             
-            # Set secure permissions
-            os.chmod(self.quarantine_dir, 0o700)
-            os.chmod(self.metadata_dir, 0o700)
+            if not file_path.exists():
+                raise ValidationError(f"File not found: {file_path}")
             
-            self.logger.info("Quarantine directory initialized")
+            # Calculate file hash and size
+            file_hash = calculate_file_hash(str(file_path))
+            if not file_hash:
+                raise QuarantineError("Failed to calculate file hash")
+            
+            file_size = file_path.stat().st_size
+            
+            # Check quarantine size limits
+            if not self._check_space_available(file_size):
+                self._cleanup_old_items()
+                if not self._check_space_available(file_size):
+                    raise QuarantineError("Quarantine storage limit exceeded")
+            
+            # Generate unique quarantine ID
+            quarantine_id = self._generate_quarantine_id(file_hash)
+            
+            # Create quarantine file path
+            quarantine_filename = f"{quarantine_id}_{sanitize_filename(file_path.name)}.qtn"
+            quarantine_path = self.quarantine_dir / quarantine_filename
+            
+            # Encrypt and move file to quarantine
+            if not self.encryption.encrypt_file(str(file_path), str(quarantine_path)):
+                raise QuarantineError("Failed to encrypt file for quarantine")
+            
+            # Create quarantine item
+            quarantine_item = QuarantineItem(
+                id=quarantine_id,
+                original_path=str(file_path),
+                quarantine_path=str(quarantine_path),
+                file_hash=file_hash,
+                file_size=file_size,
+                threat_name=threat_name,
+                detection_method=detection_method,
+                quarantine_time=datetime.now(),
+                metadata=metadata or {}
+            )
+            
+            # Store in database
+            self._store_quarantine_item(quarantine_item)
+            
+            # Remove original file
+            try:
+                file_path.unlink()
+                self.logger.info(f"File quarantined successfully: {file_path}")
+            except Exception as e:
+                self.logger.warning(f"Failed to remove original file: {e}")
+            
+            # Update statistics
+            self._update_statistics('quarantined', file_size)
+            
+            return quarantine_id
             
         except Exception as e:
-            self.logger.error(f"Failed to initialize quarantine directory: {e}")
-            raise QuarantineError(f"Quarantine initialization failed: {e}")
+            self.logger.error(f"Quarantine operation failed: {e}")
+            raise QuarantineError(f"Failed to quarantine file: {e}")
     
-    def quarantine_file(self, file_path: str, reason: str = "", 
-                       threat_info: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Quarantine a file with encryption and metadata"""
+    def restore_file(self, quarantine_id: str, restore_path: Optional[str] = None) -> bool:
+        """Restore a quarantined file"""
         try:
-            with self.lock:
-                if not os.path.exists(file_path):
-                    raise ValidationError(f"File not found: {file_path}")
+            # Get quarantine item
+            item = self._get_quarantine_item(quarantine_id)
+            if not item:
+                raise ValidationError(f"Quarantine item not found: {quarantine_id}")
+            
+            if item.status != QuarantineStatus.QUARANTINED:
+                raise ValidationError(f"Item is not in quarantined status: {item.status}")
+            
+            # Determine restore path
+            if restore_path:
+                restore_path = Path(restore_path)
+            else:
+                restore_path = Path(item.original_path)
+            
+            # Ensure restore directory exists
+            restore_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Decrypt and restore file
+            quarantine_path = Path(item.quarantine_path)
+            if not quarantine_path.exists():
+                raise QuarantineError(f"Quarantined file not found: {quarantine_path}")
+            
+            if not self.encryption.decrypt_file(str(quarantine_path), str(restore_path)):
+                raise QuarantineError("Failed to decrypt quarantined file")
+            
+            # Verify file integrity
+            restored_hash = calculate_file_hash(str(restore_path))
+            if restored_hash != item.file_hash:
+                restore_path.unlink()  # Remove corrupted file
+                raise QuarantineError("File integrity check failed after restoration")
+            
+            # Update item status
+            item.status = QuarantineStatus.RESTORED
+            item.restore_count += 1
+            item.last_accessed = datetime.now()
+            self._update_quarantine_item(item)
+            
+            # Remove quarantined file
+            try:
+                quarantine_path.unlink()
+            except Exception as e:
+                self.logger.warning(f"Failed to remove quarantined file: {e}")
+            
+            # Update statistics
+            self._update_statistics('restored', -item.file_size)
+            
+            self.logger.info(f"File restored successfully: {restore_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Restore operation failed: {e}")
+            raise QuarantineError(f"Failed to restore file: {e}")
+    
+    def delete_quarantined_file(self, quarantine_id: str) -> bool:
+        """Permanently delete a quarantined file"""
+        try:
+            # Get quarantine item
+            item = self._get_quarantine_item(quarantine_id)
+            if not item:
+                raise ValidationError(f"Quarantine item not found: {quarantine_id}")
+            
+            # Remove quarantined file
+            quarantine_path = Path(item.quarantine_path)
+            if quarantine_path.exists():
+                # Secure deletion (overwrite with random data)
+                self._secure_delete_file(quarantine_path)
+            
+            # Update item status
+            item.status = QuarantineStatus.DELETED
+            item.last_accessed = datetime.now()
+            self._update_quarantine_item(item)
+            
+            # Update statistics
+            self._update_statistics('deleted', -item.file_size)
+            
+            self.logger.info(f"Quarantined file deleted permanently: {quarantine_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Delete operation failed: {e}")
+            raise QuarantineError(f"Failed to delete quarantined file: {e}")
+    
+    def list_quarantined_files(self, status: Optional[QuarantineStatus] = None, 
+                              limit: int = 100) -> List[QuarantineItem]:
+        """List quarantined files"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
                 
-                if not os.path.isfile(file_path):
-                    raise ValidationError(f"Path is not a file: {file_path}")
-                
-                # Generate quarantine filename
-                file_hash = calculate_file_hash(file_path)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                original_name = sanitize_filename(os.path.basename(file_path))
-                quarantine_name = f"{timestamp}_{file_hash[:8]}_{original_name}.quar"
-                quarantine_path = os.path.join(self.quarantine_dir, quarantine_name)
-                
-                # Create metadata
-                metadata = self._create_metadata(file_path, reason, threat_info)
-                
-                # Encrypt and move file to quarantine
-                if secure_config.get("quarantine.encryption", True):
-                    success = self.encryption.encrypt_file(file_path, quarantine_path)
+                if status:
+                    cursor.execute('''
+                        SELECT * FROM quarantine_items 
+                        WHERE status = ? 
+                        ORDER BY quarantine_time DESC 
+                        LIMIT ?
+                    ''', (status.value, limit))
                 else:
-                    shutil.copy2(file_path, quarantine_path)
-                    os.chmod(quarantine_path, 0o600)
-                    success = True
+                    cursor.execute('''
+                        SELECT * FROM quarantine_items 
+                        ORDER BY quarantine_time DESC 
+                        LIMIT ?
+                    ''', (limit,))
                 
-                if not success:
-                    raise QuarantineError("Failed to encrypt file for quarantine")
+                items = []
+                for row in cursor.fetchall():
+                    item = self._row_to_quarantine_item(row)
+                    items.append(item)
                 
-                # Save metadata
-                metadata_path = os.path.join(self.metadata_dir, f"{quarantine_name}.json")
-                with open(metadata_path, 'w') as f:
-                    json.dump(metadata, f, indent=2)
-                
-                os.chmod(metadata_path, 0o600)
-                
-                # Store in database
-                self._store_quarantine_record(metadata, quarantine_path)
-                
-                # Securely delete original file
-                if secure_config.get("quarantine.secure_delete", True):
-                    self._secure_delete(file_path)
-                else:
-                    os.remove(file_path)
-                
-                self.logger.info(f"File quarantined: {file_path} -> {quarantine_path}")
-                
-                return {
-                    'success': True,
-                    'quarantine_path': quarantine_path,
-                    'quarantine_id': metadata['quarantine_id'],
-                    'metadata': metadata
-                }
+                conn.close()
+                return items
                 
         except Exception as e:
-            self.logger.error(f"Failed to quarantine file {file_path}: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def restore_file(self, quarantine_id: str, restore_path: Optional[str] = None) -> Dict[str, Any]:
-        """Restore file from quarantine"""
-        try:
-            with self.lock:
-                # Get quarantine record
-                record = self._get_quarantine_record(quarantine_id)
-                if not record:
-                    raise QuarantineError(f"Quarantine record not found: {quarantine_id}")
-                
-                quarantine_path = record['quarantine_path']
-                original_path = record['original_path']
-                
-                if not os.path.exists(quarantine_path):
-                    raise QuarantineError(f"Quarantined file not found: {quarantine_path}")
-                
-                # Determine restore path
-                if restore_path is None:
-                    restore_path = original_path
-                
-                # Ensure restore directory exists
-                os.makedirs(os.path.dirname(restore_path), exist_ok=True)
-                
-                # Decrypt and restore file
-                if record.get('encrypted', True):
-                    success = self.encryption.decrypt_file(quarantine_path, restore_path)
-                else:
-                    shutil.copy2(quarantine_path, restore_path)
-                    success = True
-                
-                if not success:
-                    raise QuarantineError("Failed to decrypt file from quarantine")
-                
-                # Restore original permissions if available
-                if 'original_permissions' in record:
-                    try:
-                        os.chmod(restore_path, int(record['original_permissions'], 8))
-                    except:
-                        pass
-                
-                # Update database record
-                self._update_quarantine_status(quarantine_id, 'RESTORED', restore_path)
-                
-                self.logger.info(f"File restored: {quarantine_path} -> {restore_path}")
-                
-                return {
-                    'success': True,
-                    'restore_path': restore_path,
-                    'original_path': original_path
-                }
-                
-        except Exception as e:
-            self.logger.error(f"Failed to restore file {quarantine_id}: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def delete_quarantined_file(self, quarantine_id: str) -> Dict[str, Any]:
-        """Permanently delete quarantined file"""
-        try:
-            with self.lock:
-                # Get quarantine record
-                record = self._get_quarantine_record(quarantine_id)
-                if not record:
-                    raise QuarantineError(f"Quarantine record not found: {quarantine_id}")
-                
-                quarantine_path = record['quarantine_path']
-                
-                # Securely delete quarantined file
-                if os.path.exists(quarantine_path):
-                    self._secure_delete(quarantine_path)
-                
-                # Delete metadata file
-                metadata_path = quarantine_path.replace(self.quarantine_dir, self.metadata_dir) + ".json"
-                if os.path.exists(metadata_path):
-                    self._secure_delete(metadata_path)
-                
-                # Update database record
-                self._update_quarantine_status(quarantine_id, 'DELETED')
-                
-                self.logger.info(f"Quarantined file permanently deleted: {quarantine_id}")
-                
-                return {
-                    'success': True,
-                    'quarantine_id': quarantine_id
-                }
-                
-        except Exception as e:
-            self.logger.error(f"Failed to delete quarantined file {quarantine_id}: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def list_quarantined_items(self, status: str = 'QUARANTINED') -> List[Dict[str, Any]]:
-        """List quarantined items"""
-        try:
-            query = """
-                SELECT quarantine_id, original_path, quarantine_path, file_hash,
-                       threat_name, quarantine_reason, quarantined_at, status
-                FROM quarantine_items
-                WHERE status = :status
-                ORDER BY quarantined_at DESC
-            """
-            
-            results = db_manager.execute_query(query, {'status': status})
-            
-            items = []
-            for row in results:
-                items.append({
-                    'quarantine_id': row[0],
-                    'original_path': row[1],
-                    'quarantine_path': row[2],
-                    'file_hash': row[3],
-                    'threat_name': row[4],
-                    'quarantine_reason': row[5],
-                    'quarantined_at': row[6].isoformat() if row[6] else None,
-                    'status': row[7]
-                })
-            
-            return items
-            
-        except Exception as e:
-            self.logger.error(f"Failed to list quarantined items: {e}")
+            self.logger.error(f"Failed to list quarantined files: {e}")
             return []
     
-    def get_quarantine_stats(self) -> Dict[str, Any]:
+    def get_quarantine_statistics(self) -> Dict[str, Any]:
         """Get quarantine statistics"""
         try:
-            stats_query = """
-                SELECT status, COUNT(*) as count
-                FROM quarantine_items
-                GROUP BY status
-            """
+            # Update current size
+            current_size = self._calculate_current_size()
+            self.stats['current_size'] = current_size
             
-            results = db_manager.execute_query(stats_query)
-            status_counts = {row[0]: row[1] for row in results}
-            
-            # Calculate disk usage
-            total_size = 0
-            if os.path.exists(self.quarantine_dir):
-                for root, dirs, files in os.walk(self.quarantine_dir):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        try:
-                            total_size += os.path.getsize(file_path)
-                        except:
-                            pass
+            # Get item counts by status
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT status, COUNT(*) FROM quarantine_items 
+                    GROUP BY status
+                ''')
+                
+                status_counts = {}
+                for status, count in cursor.fetchall():
+                    status_counts[status] = count
+                
+                conn.close()
             
             return {
+                **self.stats,
                 'status_counts': status_counts,
-                'total_size_bytes': total_size,
-                'total_size_mb': round(total_size / (1024 * 1024), 2),
-                'quarantine_dir': self.quarantine_dir,
-                'max_size_mb': round(self.max_quarantine_size / (1024 * 1024), 2),
+                'quarantine_dir': str(self.quarantine_dir),
+                'encryption_enabled': self.encryption.is_encryption_enabled(),
+                'max_size': self.max_quarantine_size,
                 'retention_days': self.retention_days
             }
             
         except Exception as e:
-            self.logger.error(f"Failed to get quarantine stats: {e}")
-            return {}
+            self.logger.error(f"Failed to get statistics: {e}")
+            return self.stats
     
     def cleanup_old_items(self, days: Optional[int] = None) -> int:
-        """Clean up old quarantine items"""
+        """Clean up old quarantined items"""
         try:
             if days is None:
                 days = self.retention_days
             
             cutoff_date = datetime.now() - timedelta(days=days)
             
-            # Get old items
-            query = """
-                SELECT quarantine_id, quarantine_path
-                FROM quarantine_items
-                WHERE quarantined_at < :cutoff_date
-                AND status IN ('QUARANTINED', 'RESTORED')
-            """
-            
-            results = db_manager.execute_query(query, {'cutoff_date': cutoff_date})
-            
-            cleaned_count = 0
-            for quarantine_id, quarantine_path in results:
-                try:
-                    # Delete files
-                    if os.path.exists(quarantine_path):
-                        self._secure_delete(quarantine_path)
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                # Get old items
+                cursor.execute('''
+                    SELECT * FROM quarantine_items 
+                    WHERE quarantine_time < ? AND status = 'quarantined'
+                ''', (cutoff_date.isoformat(),))
+                
+                old_items = cursor.fetchall()
+                cleaned_count = 0
+                
+                for row in old_items:
+                    item = self._row_to_quarantine_item(row)
                     
-                    # Delete metadata
-                    metadata_path = quarantine_path.replace(self.quarantine_dir, self.metadata_dir) + ".json"
-                    if os.path.exists(metadata_path):
-                        self._secure_delete(metadata_path)
+                    # Remove file
+                    quarantine_path = Path(item.quarantine_path)
+                    if quarantine_path.exists():
+                        self._secure_delete_file(quarantine_path)
                     
-                    # Update database
-                    self._update_quarantine_status(quarantine_id, 'CLEANED')
+                    # Update status
+                    cursor.execute('''
+                        UPDATE quarantine_items 
+                        SET status = 'deleted', last_accessed = ? 
+                        WHERE id = ?
+                    ''', (datetime.now().isoformat(), item.id))
                     
                     cleaned_count += 1
-                    
-                except Exception as e:
-                    self.logger.error(f"Failed to clean quarantine item {quarantine_id}: {e}")
-            
-            self.logger.info(f"Cleaned {cleaned_count} old quarantine items")
-            return cleaned_count
-            
+                
+                conn.commit()
+                conn.close()
+                
+                # Update statistics
+                self.stats['last_cleanup'] = datetime.now().isoformat()
+                self._save_statistics()
+                
+                self.logger.info(f"Cleaned up {cleaned_count} old quarantine items")
+                return cleaned_count
+                
         except Exception as e:
-            self.logger.error(f"Failed to cleanup old items: {e}")
+            self.logger.error(f"Cleanup operation failed: {e}")
             return 0
     
-    def _create_metadata(self, file_path: str, reason: str, 
-                        threat_info: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """Create metadata for quarantined file"""
-        try:
-            file_stat = os.stat(file_path)
-            
-            metadata = {
-                'quarantine_id': self._generate_quarantine_id(),
-                'original_path': os.path.abspath(file_path),
-                'original_name': os.path.basename(file_path),
-                'file_size': file_stat.st_size,
-                'file_hash': calculate_file_hash(file_path),
-                'quarantine_reason': reason,
-                'quarantined_at': datetime.now().isoformat(),
-                'original_permissions': oct(file_stat.st_mode)[-3:],
-                'original_mtime': datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
-                'encrypted': secure_config.get("quarantine.encryption", True),
-                'threat_info': threat_info or {},
-                'system_info': {
-                    'hostname': os.uname().nodename if hasattr(os, 'uname') else 'unknown',
-                    'user': os.getenv('USER') or os.getenv('USERNAME', 'unknown'),
-                    'platform': os.name
-                }
-            }
-            
-            return metadata
-            
-        except Exception as e:
-            self.logger.error(f"Failed to create metadata: {e}")
-            raise QuarantineError(f"Metadata creation failed: {e}")
-    
-    def _generate_quarantine_id(self) -> str:
+    def _generate_quarantine_id(self, file_hash: str) -> str:
         """Generate unique quarantine ID"""
-        timestamp = str(int(time.time() * 1000))
-        random_part = os.urandom(4).hex()
-        return f"QUAR_{timestamp}_{random_part}"
+        timestamp = str(int(time.time()))
+        unique_data = f"{file_hash}_{timestamp}"
+        return hashlib.sha256(unique_data.encode()).hexdigest()[:16]
     
-    def _store_quarantine_record(self, metadata: Dict[str, Any], quarantine_path: str):
-        """Store quarantine record in database"""
-        try:
-            query = """
-                INSERT INTO quarantine_items 
-                (quarantine_id, original_path, quarantine_path, file_hash, 
-                 threat_name, quarantine_reason, quarantined_at, status)
-                VALUES (:quarantine_id, :original_path, :quarantine_path, :file_hash,
-                        :threat_name, :quarantine_reason, :quarantined_at, :status)
-            """
-            
-            threat_name = "Unknown"
-            if metadata.get('threat_info') and metadata['threat_info'].get('detections'):
-                threat_name = metadata['threat_info']['detections'][0].get('threat_name', 'Unknown')
-            
-            params = {
-                'quarantine_id': metadata['quarantine_id'],
-                'original_path': metadata['original_path'],
-                'quarantine_path': quarantine_path,
-                'file_hash': metadata['file_hash'],
-                'threat_name': threat_name,
-                'quarantine_reason': metadata['quarantine_reason'],
-                'quarantined_at': datetime.fromisoformat(metadata['quarantined_at']),
-                'status': 'QUARANTINED'
-            }
-            
-            db_manager.execute_command(query, params)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to store quarantine record: {e}")
-            raise QuarantineError(f"Database storage failed: {e}")
+    def _check_space_available(self, file_size: int) -> bool:
+        """Check if space is available for quarantine"""
+        current_size = self._calculate_current_size()
+        return (current_size + file_size) <= self.max_quarantine_size
     
-    def _get_quarantine_record(self, quarantine_id: str) -> Optional[Dict[str, Any]]:
-        """Get quarantine record from database"""
+    def _calculate_current_size(self) -> int:
+        """Calculate current quarantine directory size"""
         try:
-            query = """
-                SELECT quarantine_id, original_path, quarantine_path, file_hash,
-                       threat_name, quarantine_reason, quarantined_at, status
-                FROM quarantine_items
-                WHERE quarantine_id = :quarantine_id
-            """
-            
-            results = db_manager.execute_query(query, {'quarantine_id': quarantine_id})
-            
-            if results:
-                row = results[0]
-                return {
-                    'quarantine_id': row[0],
-                    'original_path': row[1],
-                    'quarantine_path': row[2],
-                    'file_hash': row[3],
-                    'threat_name': row[4],
-                    'quarantine_reason': row[5],
-                    'quarantined_at': row[6],
-                    'status': row[7],
-                    'encrypted': True  # Assume encrypted by default
-                }
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Failed to get quarantine record: {e}")
-            return None
+            total_size = 0
+            for file_path in self.quarantine_dir.rglob("*.qtn"):
+                if file_path.is_file():
+                    total_size += file_path.stat().st_size
+            return total_size
+        except Exception:
+            return 0
     
-    def _update_quarantine_status(self, quarantine_id: str, status: str, 
-                                 restore_path: Optional[str] = None):
-        """Update quarantine status in database"""
+    def _secure_delete_file(self, file_path: Path):
+        """Securely delete a file by overwriting with random data"""
         try:
-            if restore_path:
-                query = """
-                    UPDATE quarantine_items 
-                    SET status = :status, restored_at = CURRENT_TIMESTAMP
-                    WHERE quarantine_id = :quarantine_id
-                """
-            else:
-                query = """
-                    UPDATE quarantine_items 
-                    SET status = :status
-                    WHERE quarantine_id = :quarantine_id
-                """
-            
-            params = {
-                'quarantine_id': quarantine_id,
-                'status': status
-            }
-            
-            db_manager.execute_command(query, params)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to update quarantine status: {e}")
-    
-    def _secure_delete(self, file_path: str):
-        """Securely delete file by overwriting with random data"""
-        try:
-            if not os.path.exists(file_path):
+            if not file_path.exists():
                 return
             
-            file_size = os.path.getsize(file_path)
+            file_size = file_path.stat().st_size
             
-            # Overwrite file with random data multiple times
+            # Overwrite with random data (3 passes)
             with open(file_path, 'r+b') as f:
-                for _ in range(3):  # 3 passes
+                for _ in range(3):
                     f.seek(0)
                     f.write(os.urandom(file_size))
                     f.flush()
                     os.fsync(f.fileno())
             
-            # Finally delete the file
-            os.remove(file_path)
+            # Remove file
+            file_path.unlink()
             
         except Exception as e:
-            self.logger.error(f"Failed to securely delete {file_path}: {e}")
-            # Fallback to regular delete
+            self.logger.warning(f"Secure deletion failed, using normal deletion: {e}")
             try:
-                os.remove(file_path)
-            except:
+                file_path.unlink()
+            except Exception:
                 pass
     
-    def _start_cleanup_thread(self):
-        """Start automatic cleanup thread"""
-        def cleanup_worker():
-            while True:
-                try:
-                    time.sleep(3600)  # Run every hour
-                    self.cleanup_old_items()
-                except Exception as e:
-                    self.logger.error(f"Cleanup thread error: {e}")
+    def _store_quarantine_item(self, item: QuarantineItem):
+        """Store quarantine item in database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    INSERT INTO quarantine_items 
+                    (id, original_path, quarantine_path, file_hash, file_size, 
+                     threat_name, detection_method, quarantine_time, status, 
+                     metadata, restore_count, last_accessed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    item.id, item.original_path, item.quarantine_path,
+                    item.file_hash, item.file_size, item.threat_name,
+                    item.detection_method, item.quarantine_time.isoformat(),
+                    item.status.value, json.dumps(item.metadata),
+                    item.restore_count,
+                    item.last_accessed.isoformat() if item.last_accessed else None
+                ))
+                
+                conn.commit()
+                conn.close()
+                
+        except Exception as e:
+            self.logger.error(f"Failed to store quarantine item: {e}")
+            raise QuarantineError(f"Database storage failed: {e}")
+    
+    def _get_quarantine_item(self, quarantine_id: str) -> Optional[QuarantineItem]:
+        """Get quarantine item from database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT * FROM quarantine_items WHERE id = ?
+                ''', (quarantine_id,))
+                
+                row = cursor.fetchone()
+                conn.close()
+                
+                if row:
+                    return self._row_to_quarantine_item(row)
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Failed to get quarantine item: {e}")
+            return None
+    
+    def _update_quarantine_item(self, item: QuarantineItem):
+        """Update quarantine item in database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    UPDATE quarantine_items 
+                    SET status = ?, metadata = ?, restore_count = ?, last_accessed = ?
+                    WHERE id = ?
+                ''', (
+                    item.status.value, json.dumps(item.metadata),
+                    item.restore_count,
+                    item.last_accessed.isoformat() if item.last_accessed else None,
+                    item.id
+                ))
+                
+                conn.commit()
+                conn.close()
+                
+        except Exception as e:
+            self.logger.error(f"Failed to update quarantine item: {e}")
+            raise QuarantineError(f"Database update failed: {e}")
+    
+    def _row_to_quarantine_item(self, row) -> QuarantineItem:
+        """Convert database row to QuarantineItem"""
+        return QuarantineItem(
+            id=row[0],
+            original_path=row[1],
+            quarantine_path=row[2],
+            file_hash=row[3],
+            file_size=row[4],
+            threat_name=row[5],
+            detection_method=row[6],
+            quarantine_time=datetime.fromisoformat(row[7]),
+            status=QuarantineStatus(row[8]),
+            metadata=json.loads(row[9]) if row[9] else {},
+            restore_count=row[10],
+            last_accessed=datetime.fromisoformat(row[11]) if row[11] else None
+        )
+    
+    def _cleanup_old_items(self):
+        """Internal cleanup method"""
+        if self.auto_cleanup_enabled:
+            self.cleanup_old_items()
+    
+    def _update_statistics(self, operation: str, size_change: int = 0):
+        """Update statistics"""
+        if operation == 'quarantined':
+            self.stats['total_quarantined'] += 1
+        elif operation == 'restored':
+            self.stats['total_restored'] += 1
+        elif operation == 'deleted':
+            self.stats['total_deleted'] += 1
         
-        cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True)
-        cleanup_thread.start()
-        self.logger.info("Automatic cleanup thread started")
+        self.stats['current_size'] += size_change
+        self._save_statistics()
+    
+    def _load_statistics(self):
+        """Load statistics from database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                cursor.execute('SELECT key, value FROM quarantine_stats')
+                for key, value in cursor.fetchall():
+                    if key in self.stats:
+                        try:
+                            self.stats[key] = int(value) if value.isdigit() else value
+                        except (ValueError, AttributeError):
+                            self.stats[key] = value
+                
+                conn.close()
+                
+        except Exception as e:
+            self.logger.debug(f"Failed to load statistics: {e}")
+    
+    def _save_statistics(self):
+        """Save statistics to database"""
+        try:
+            with self.db_lock:
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                for key, value in self.stats.items():
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO quarantine_stats 
+                        (key, value, updated_at) VALUES (?, ?, ?)
+                    ''', (key, str(value), datetime.now().isoformat()))
+                
+                conn.commit()
+                conn.close()
+                
+        except Exception as e:
+            self.logger.debug(f"Failed to save statistics: {e}")
+    
+    def verify_integrity(self) -> Dict[str, Any]:
+        """Verify integrity of quarantined files"""
+        try:
+            items = self.list_quarantined_files(QuarantineStatus.QUARANTINED)
+            
+            results = {
+                'total_checked': 0,
+                'corrupted_files': [],
+                'missing_files': [],
+                'intact_files': 0
+            }
+            
+            for item in items:
+                results['total_checked'] += 1
+                quarantine_path = Path(item.quarantine_path)
+                
+                if not quarantine_path.exists():
+                    results['missing_files'].append(item.id)
+                    continue
+                
+                # For encrypted files, we can't easily verify without decrypting
+                # So we just check if the file exists and has reasonable size
+                if quarantine_path.stat().st_size == 0:
+                    results['corrupted_files'].append(item.id)
+                else:
+                    results['intact_files'] += 1
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Integrity verification failed: {e}")
+            return {'error': str(e)}
+    
+    def export_quarantine_info(self, export_path: str) -> bool:
+        """Export quarantine information to file"""
+        try:
+            items = self.list_quarantined_files()
+            stats = self.get_quarantine_statistics()
+            
+            export_data = {
+                'export_time': datetime.now().isoformat(),
+                'statistics': stats,
+                'items': []
+            }
+            
+            for item in items:
+                export_data['items'].append({
+                    'id': item.id,
+                    'original_path': item.original_path,
+                    'file_hash': item.file_hash,
+                    'file_size': item.file_size,
+                    'threat_name': item.threat_name,
+                    'detection_method': item.detection_method,
+                    'quarantine_time': item.quarantine_time.isoformat(),
+                    'status': item.status.value,
+                    'restore_count': item.restore_count
+                })
+            
+            with open(export_path, 'w') as f:
+                json.dump(export_data, f, indent=2)
+            
+            self.logger.info(f"Quarantine information exported to: {export_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Export failed: {e}")
+            return False

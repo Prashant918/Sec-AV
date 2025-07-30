@@ -1,283 +1,100 @@
 """
-Prashant918 Advanced Antivirus - Enterprise Cybersecurity Solution
-
-A comprehensive cybersecurity platform providing advanced threat detection,
-real-time monitoring, and enterprise-grade protection capabilities.
-
-Features:
-- Multi-layered threat detection (AI/ML, signatures, heuristics)
-- Real-time behavioral analysis and monitoring
-- Oracle database backend for enterprise scalability
-- Advanced malware analysis with YARA rules
-- Encrypted quarantine and secure logging
-- Cloud threat intelligence integration
-- Network traffic analysis and monitoring
-- Memory scanning and rootkit detection
-- Automated threat response and remediation
-
-Author: Prashant918 Security Team
-License: Proprietary
-Version: 2.0.0
+Prashant918 Advanced Antivirus
+Enterprise-grade AI-powered cybersecurity solution
 """
+
+__version__ = "1.0.2"
+__author__ = "Prashant918"
+__email__ = "prashant918@example.com"
+__description__ = "Advanced AI-powered antivirus system with behavioral analysis and cloud intelligence"
 
 import sys
 import os
-import logging
-from typing import Dict, Any, Optional
-
-# Version information
-__version__ = "2.0.0"
-__author__ = "Prashant918 Security Team"
-__email__ = "security@prashant918.com"
-__license__ = "Proprietary"
-__copyright__ = "Copyright 2024 Prashant918 Security Solutions"
+from pathlib import Path
 
 # Minimum Python version check
-if sys.version_info < (3, 9):
-    raise RuntimeError(
-        f"Prashant918 Advanced Antivirus requires Python 3.9 or later. "
-        f"Current version: {sys.version_info.major}.{sys.version_info.minor}"
-    )
+if sys.version_info < (3, 8):
+    raise RuntimeError("Python 3.8 or higher is required")
 
-# Package metadata
-__all__ = [
-    # Version info
-    "__version__",
-    "__author__",
-    "__email__",
-    "__license__",
-    "__copyright__",
+# Add src directory to path for development
+src_path = Path(__file__).parent.parent
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+# Core imports with graceful degradation
+try:
+    from .logger import SecureLogger
+    from .config import secure_config
+    from .exceptions import AntivirusError
+    
+    # Initialize logging
+    logger = SecureLogger("Prashant918AV")
+    logger.info(f"Prashant918 Advanced Antivirus v{__version__} initializing...")
     
     # Core components
-    "AntivirusEngine",
-    "ThreatDetector",
-    "SignatureManager",
-    "QuarantineManager",
-    "ConfigManager",
-    "DatabaseManager",
-    "Logger",
-    
-    # Utilities
-    "initialize",
-    "get_version_info",
-    "get_system_info",
-    "check_dependencies",
-    
-    # Exceptions
-    "AntivirusError",
-    "ConfigurationError",
-    "DatabaseError",
-    "ScanError",
-    "QuarantineError",
-]
-
-# Import core components
-try:
-    from .core.engine import AdvancedThreatDetectionEngine as AntivirusEngine
-    from .core.detector import ThreatDetector
-    from .core.signatures import AdvancedSignatureManager as SignatureManager
+    from .core.engine import UnifiedThreatEngine
+    from .core.scanner import FileScanner
     from .core.quarantine import QuarantineManager
-    from .core.config import SecureConfig as ConfigManager
-    from .core.database import OracleConnectionManager as DatabaseManager
-    from .core.logger import SecureLogger as Logger
+    from .database.manager import db_manager
     
-    # Import exceptions
-    from .exceptions import (
-        AntivirusError,
-        ConfigurationError,
-        DatabaseError,
-        ScanError,
-        QuarantineError,
-    )
+    # Optional components
+    try:
+        from .gui.main_window import AntivirusGUI
+        HAS_GUI = True
+    except ImportError:
+        HAS_GUI = False
+        logger.warning("GUI components not available")
     
-    # Import utilities
-    from .utils import (
-        initialize,
-        get_version_info,
-        get_system_info,
-        check_dependencies,
-    )
+    try:
+        from .api.web_api import create_app
+        HAS_API = True
+    except ImportError:
+        HAS_API = False
+        logger.warning("API components not available")
+    
+    try:
+        from .service.service_manager import ServiceManager
+        HAS_SERVICE = True
+    except ImportError:
+        HAS_SERVICE = False
+        logger.warning("Service management not available")
+    
+    # Component availability
+    COMPONENTS = {
+        'engine': True,
+        'scanner': True,
+        'quarantine': True,
+        'database': True,
+        'gui': HAS_GUI,
+        'api': HAS_API,
+        'service': HAS_SERVICE
+    }
+    
+    logger.info("Prashant918 Advanced Antivirus initialized successfully")
     
 except ImportError as e:
-    # Handle import errors gracefully during development
-    import warnings
-    warnings.warn(f"Some components could not be imported: {e}", ImportWarning)
-    
-    # Define placeholder classes to prevent import errors
-    class AntivirusEngine:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("AntivirusEngine not available due to missing dependencies")
-    
-    class ThreatDetector:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("ThreatDetector not available due to missing dependencies")
-    
-    # Define other placeholders...
-    SignatureManager = AntivirusEngine
-    QuarantineManager = AntivirusEngine
-    ConfigManager = AntivirusEngine
-    DatabaseManager = AntivirusEngine
-    Logger = AntivirusEngine
-    
-    # Define placeholder exceptions
-    class AntivirusError(Exception):
-        pass
-    
-    ConfigurationError = AntivirusError
-    DatabaseError = AntivirusError
-    ScanError = AntivirusError
-    QuarantineError = AntivirusError
-    
-    # Define placeholder utilities
-    def initialize(*args, **kwargs):
-        raise ImportError("Initialization not available due to missing dependencies")
-    
-    def get_version_info():
-        return {"version": __version__, "status": "dependencies_missing"}
-    
-    def get_system_info():
-        return {"error": "System info not available due to missing dependencies"}
-    
-    def check_dependencies():
-        return {"status": "failed", "missing_dependencies": str(e)}
+    print(f"Warning: Failed to import core components: {e}")
+    COMPONENTS = {}
 
-# Configure package-level logging
-def _setup_package_logging():
-    """Setup package-level logging configuration"""
-    logger = logging.getLogger(__name__)
+# Export main components
+__all__ = [
+    '__version__',
+    '__author__',
+    '__email__',
+    '__description__',
+    'UnifiedThreatEngine',
+    'FileScanner',
+    'QuarantineManager',
+    'db_manager',
+    'COMPONENTS'
+]
+
+# Add GUI and API if available
+if 'HAS_GUI' in locals() and HAS_GUI:
+    __all__.append('AntivirusGUI')
     
-    # Only add handler if none exists
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
+if 'HAS_API' in locals() and HAS_API:
+    __all__.append('create_app')
     
-    return logger
-
-# Initialize package logging
-_package_logger = _setup_package_logging()
-
-def get_package_info() -> Dict[str, Any]:
-    """Get comprehensive package information"""
-    return {
-        "name": "prashant918-advanced-antivirus",
-        "version": __version__,
-        "author": __author__,
-        "email": __email__,
-        "license": __license__,
-        "copyright": __copyright__,
-        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-        "platform": sys.platform,
-        "architecture": os.uname().machine if hasattr(os, 'uname') else 'unknown',
-        "installation_path": os.path.dirname(__file__),
-    }
-
-def validate_environment() -> Dict[str, Any]:
-    """Validate the runtime environment"""
-    validation_results = {
-        "python_version": sys.version_info >= (3, 9),
-        "required_modules": {},
-        "optional_modules": {},
-        "system_requirements": {},
-        "overall_status": True
-    }
-    
-    # Check required modules
-    required_modules = [
-        "cryptography",
-        "requests",
-        "psutil",
-        "numpy",
-        "pandas",
-        "sqlalchemy",
-    ]
-    
-    for module in required_modules:
-        try:
-            __import__(module)
-            validation_results["required_modules"][module] = True
-        except ImportError:
-            validation_results["required_modules"][module] = False
-            validation_results["overall_status"] = False
-    
-    # Check optional modules
-    optional_modules = [
-        "cx_Oracle",
-        "yara",
-        "magic",
-        "pefile",
-        "tensorflow",
-    ]
-    
-    for module in optional_modules:
-        try:
-            __import__(module)
-            validation_results["optional_modules"][module] = True
-        except ImportError:
-            validation_results["optional_modules"][module] = False
-    
-    # Check system requirements
-    validation_results["system_requirements"] = {
-        "memory_gb": _get_system_memory_gb(),
-        "disk_space_gb": _get_available_disk_space_gb(),
-        "cpu_cores": os.cpu_count() or 1,
-    }
-    
-    return validation_results
-
-def _get_system_memory_gb() -> float:
-    """Get system memory in GB"""
-    try:
-        import psutil
-        return psutil.virtual_memory().total / (1024**3)
-    except ImportError:
-        return 0.0
-
-def _get_available_disk_space_gb() -> float:
-    """Get available disk space in GB"""
-    try:
-        import psutil
-        return psutil.disk_usage('.').free / (1024**3)
-    except ImportError:
-        return 0.0
-
-# Package initialization
-def _initialize_package():
-    """Initialize package components"""
-    try:
-        _package_logger.info(f"Initializing Prashant918 Advanced Antivirus v{__version__}")
-        
-        # Validate environment
-        validation = validate_environment()
-        if not validation["overall_status"]:
-            _package_logger.warning("Some required dependencies are missing")
-        
-        # Log system information
-        system_info = get_package_info()
-        _package_logger.info(f"Running on {system_info['platform']} with Python {system_info['python_version']}")
-        
-        _package_logger.info("Package initialization completed successfully")
-        
-    except Exception as e:
-        _package_logger.error(f"Package initialization failed: {e}")
-
-# Initialize package on import
-_initialize_package()
-
-# Cleanup function for package shutdown
-def cleanup():
-    """Cleanup package resources"""
-    try:
-        _package_logger.info("Cleaning up package resources...")
-        # Add cleanup logic here if needed
-        _package_logger.info("Package cleanup completed")
-    except Exception as e:
-        _package_logger.error(f"Package cleanup failed: {e}")
-
-# Register cleanup function
-import atexit
-atexit.register(cleanup)
+if 'HAS_SERVICE' in locals() and HAS_SERVICE:
+    __all__.append('ServiceManager')

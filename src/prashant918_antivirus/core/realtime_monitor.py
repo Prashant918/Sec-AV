@@ -1,8 +1,6 @@
 """
-Prashant918 Advanced Antivirus - Real-time File System Monitor
-
-Advanced real-time monitoring system with kernel-level hooks,
-behavioral analysis, and automated threat response capabilities.
+Prashant918 Advanced Antivirus - Enhanced Real-time Monitor
+Cross-platform real-time file system monitoring with threat detection
 """
 
 import os
@@ -12,408 +10,388 @@ import threading
 import queue
 import hashlib
 import json
-from typing import Dict, List, Set, Optional, Any, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-import psutil
+from typing import Dict, List, Optional, Any, Set, Callable
+from dataclasses import dataclass, field
+from enum import Enum
+
+# Platform detection
+import platform
+PLATFORM = platform.system().lower()
+
+# Core imports with error handling
+try:
+    from ..logger import SecureLogger
+except ImportError:
+    import logging
+    SecureLogger = logging.getLogger
+
+try:
+    from ..config import secure_config
+except ImportError:
+    secure_config = type('Config', (), {'get': lambda self, key, default=None: default})()
+
+try:
+    from ..exceptions import AntivirusError
+except ImportError:
+    class AntivirusError(Exception): pass
+
+# Optional imports for enhanced functionality
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+    psutil = None
+
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler, FileSystemEvent
+    HAS_WATCHDOG = True
+except ImportError:
+    HAS_WATCHDOG = False
+    Observer = None
+    FileSystemEventHandler = None
+    FileSystemEvent = None
 
 # Platform-specific imports
-if sys.platform == "win32":
-    import win32file
-    import win32con
-    import win32api
-    import win32security
-    import wmi
-elif sys.platform.startswith("linux"):
-    import inotify_simple
-    from inotify_simple import INotify, flags
-elif sys.platform == "darwin":
-    from fsevents import Observer, Stream
+if PLATFORM == "windows":
+    try:
+        import win32file
+        import win32con
+        import win32api
+        HAS_WIN32 = True
+    except ImportError:
+        HAS_WIN32 = False
+elif PLATFORM == "linux":
+    try:
+        import select
+        HAS_INOTIFY = True
+    except ImportError:
+        HAS_INOTIFY = False
+elif PLATFORM == "darwin":
+    try:
+        import select
+        HAS_FSEVENTS = True
+    except ImportError:
+        HAS_FSEVENTS = False
 
-from watchdog.observers import Observer as WatchdogObserver
-from watchdog.events import FileSystemEventHandler, FileSystemEvent
+class EventType(Enum):
+    """File system event types"""
+    CREATED = "created"
+    MODIFIED = "modified"
+    DELETED = "deleted"
+    MOVED = "moved"
+    ACCESSED = "accessed"
 
-from ..logger import SecureLogger
-from ..config import secure_config
-from ..database import db_manager
-from ..exceptions import AntivirusError, ResourceError
-from .engine import AdvancedThreatDetectionEngine
-from .quarantine import QuarantineManager
+class ThreatAction(Enum):
+    """Actions to take when threat is detected"""
+    QUARANTINE = "quarantine"
+    DELETE = "delete"
+    ALERT = "alert"
+    BLOCK = "block"
 
+@dataclass
+class FileSystemEvent:
+    """File system event data structure"""
+    event_type: EventType
+    file_path: str
+    timestamp: datetime
+    file_size: Optional[int] = None
+    file_hash: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class ThreatDetection:
+    """Threat detection result"""
+    file_path: str
+    threat_name: str
+    threat_level: str
+    confidence: float
+    detection_method: str
+    action_taken: ThreatAction
+    timestamp: datetime
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 class FileSystemEventProcessor:
-    """Process file system events with threat detection"""
+    """Process file system events and detect threats"""
     
-    def __init__(self, threat_engine: AdvancedThreatDetectionEngine):
-        self.logger = SecureLogger("FSEventProcessor")
+    def __init__(self, threat_engine=None, quarantine_manager=None):
+        self.logger = SecureLogger("EventProcessor")
         self.threat_engine = threat_engine
-        self.quarantine_manager = QuarantineManager()
+        self.quarantine_manager = quarantine_manager
+        
+        # Event processing
         self.event_queue = queue.Queue(maxsize=10000)
         self.processing_thread = None
-        self.stop_processing = threading.Event()
+        self.is_processing = False
         
-        # Event filtering
-        self.monitored_extensions = {
-            '.exe', '.dll', '.bat', '.cmd', '.ps1', '.vbs', '.js', '.jar',
-            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-            '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
-            '.php', '.asp', '.aspx', '.jsp', '.py', '.pl', '.rb'
-        }
+        # Configuration
+        self.monitored_extensions = set(secure_config.get("monitoring.extensions", [
+            ".exe", ".scr", ".bat", ".cmd", ".com", ".pif", ".vbs", ".js", 
+            ".jar", ".app", ".deb", ".rpm", ".dmg", ".msi", ".pkg"
+        ]))
         
-        self.excluded_paths = {
-            '/proc', '/sys', '/dev', '/tmp',
-            'C:\\Windows\\System32', 'C:\\Windows\\SysWOW64',
-            '/System/Library', '/usr/lib', '/lib'
-        }
+        self.excluded_paths = set(secure_config.get("monitoring.excluded_paths", [
+            "/proc", "/sys", "/dev", "/tmp", "C:\\Windows\\System32",
+            "C:\\Windows\\SysWOW64", "/System", "/Library/Caches"
+        ]))
         
-        # Rate limiting
+        # Scan cache to avoid duplicate scans
         self.scan_cache = {}
         self.cache_timeout = 300  # 5 minutes
+        self.cache_lock = threading.Lock()
         
+        # Statistics
+        self.stats = {
+            'events_processed': 0,
+            'threats_detected': 0,
+            'files_quarantined': 0,
+            'files_blocked': 0,
+            'cache_hits': 0,
+            'processing_errors': 0
+        }
+    
     def start_processing(self):
-        """Start event processing thread"""
-        if self.processing_thread and self.processing_thread.is_alive():
+        """Start event processing"""
+        if self.is_processing:
             return
         
-        self.stop_processing.clear()
-        self.processing_thread = threading.Thread(
-            target=self._process_events,
-            daemon=True
-        )
+        self.is_processing = True
+        self.processing_thread = threading.Thread(target=self._process_events, daemon=True)
         self.processing_thread.start()
+        
         self.logger.info("Event processing started")
     
     def stop_processing(self):
-        """Stop event processing thread"""
-        self.stop_processing.set()
-        if self.processing_thread:
+        """Stop event processing"""
+        self.is_processing = False
+        
+        if self.processing_thread and self.processing_thread.is_alive():
             self.processing_thread.join(timeout=5)
+        
         self.logger.info("Event processing stopped")
     
-    def queue_event(self, event: Dict[str, Any]):
+    def queue_event(self, event: FileSystemEvent):
         """Queue file system event for processing"""
         try:
             if not self._should_process_event(event):
                 return
             
             self.event_queue.put(event, timeout=1)
+            
         except queue.Full:
-            self.logger.warning("Event queue full, dropping event")
+            self.logger.warning("Event queue is full, dropping event")
+        except Exception as e:
+            self.logger.error(f"Failed to queue event: {e}")
     
-    def _should_process_event(self, event: Dict[str, Any]) -> bool:
-        """Determine if event should be processed"""
-        file_path = event.get('path', '')
-        
-        # Check excluded paths
-        for excluded in self.excluded_paths:
-            if file_path.startswith(excluded):
+    def _should_process_event(self, event: FileSystemEvent) -> bool:
+        """Check if event should be processed"""
+        try:
+            file_path = Path(event.file_path)
+            
+            # Check if file exists (for created/modified events)
+            if event.event_type in [EventType.CREATED, EventType.MODIFIED]:
+                if not file_path.exists() or not file_path.is_file():
+                    return False
+            
+            # Check file extension
+            if file_path.suffix.lower() not in self.monitored_extensions:
                 return False
-        
-        # Check file extension
-        if event.get('event_type') in ['created', 'modified']:
-            file_ext = os.path.splitext(file_path)[1].lower()
-            if file_ext not in self.monitored_extensions:
-                return False
-        
-        # Check cache to avoid duplicate scans
-        cache_key = f"{file_path}:{event.get('event_type')}"
-        current_time = time.time()
-        
-        if cache_key in self.scan_cache:
-            last_scan_time = self.scan_cache[cache_key]
-            if current_time - last_scan_time < self.cache_timeout:
-                return False
-        
-        self.scan_cache[cache_key] = current_time
-        return True
+            
+            # Check excluded paths
+            file_str = str(file_path.absolute()).lower()
+            for excluded_path in self.excluded_paths:
+                if excluded_path.lower() in file_str:
+                    return False
+            
+            # Check cache to avoid duplicate processing
+            with self.cache_lock:
+                cache_key = f"{event.file_path}_{event.event_type.value}"
+                current_time = time.time()
+                
+                if cache_key in self.scan_cache:
+                    last_scan_time = self.scan_cache[cache_key]
+                    if current_time - last_scan_time < self.cache_timeout:
+                        self.stats['cache_hits'] += 1
+                        return False
+                
+                self.scan_cache[cache_key] = current_time
+                
+                # Clean old cache entries
+                if len(self.scan_cache) > 1000:
+                    self._clean_cache()
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error checking event: {e}")
+            return False
     
     def _process_events(self):
         """Main event processing loop"""
-        while not self.stop_processing.is_set():
+        while self.is_processing:
             try:
-                event = self.event_queue.get(timeout=1)
+                # Get event from queue with timeout
+                try:
+                    event = self.event_queue.get(timeout=1)
+                except queue.Empty:
+                    continue
+                
+                # Process the event
                 self._handle_event(event)
+                self.stats['events_processed'] += 1
+                
+                # Mark task as done
                 self.event_queue.task_done()
-            except queue.Empty:
-                continue
+                
             except Exception as e:
-                self.logger.error(f"Error processing event: {e}")
+                self.logger.error(f"Event processing error: {e}")
+                self.stats['processing_errors'] += 1
     
-    def _handle_event(self, event: Dict[str, Any]):
+    def _handle_event(self, event: FileSystemEvent):
         """Handle individual file system event"""
         try:
-            file_path = event['path']
-            event_type = event['event_type']
-            
-            self.logger.debug(f"Processing {event_type} event for {file_path}")
-            
-            # Skip if file doesn't exist or is not accessible
-            if not os.path.exists(file_path) or not os.path.isfile(file_path):
+            # Skip if no threat engine available
+            if not self.threat_engine:
                 return
             
-            # Perform threat scan
-            scan_result = self.threat_engine.scan_file(file_path)
+            # Scan file for threats
+            scan_result = self.threat_engine.scan_file(event.file_path)
             
-            # Handle threats
-            if scan_result['classification'] in ['MALICIOUS', 'SUSPICIOUS']:
-                self._handle_threat(file_path, scan_result, event)
-            
-            # Log event
-            self._log_event(event, scan_result)
-            
-        except Exception as e:
-            self.logger.error(f"Error handling event {event}: {e}")
-    
-    def _handle_threat(self, file_path: str, scan_result: Dict[str, Any], event: Dict[str, Any]):
-        """Handle detected threat"""
-        try:
-            threat_score = scan_result.get('threat_score', 0.0)
-            classification = scan_result['classification']
-            
-            self.logger.warning(
-                f"Threat detected: {file_path} - {classification} "
-                f"(Score: {threat_score:.2f})"
-            )
-            
-            # Quarantine high-risk files immediately
-            if threat_score >= 0.8 or classification == 'MALICIOUS':
-                quarantine_result = self.quarantine_manager.quarantine_file(
-                    file_path,
-                    reason=f"Real-time detection: {classification}",
-                    threat_info=scan_result
+            if scan_result.threat_level.value in ['malware', 'critical']:
+                threat_detection = ThreatDetection(
+                    file_path=event.file_path,
+                    threat_name=scan_result.threat_name or "Unknown threat",
+                    threat_level=scan_result.threat_level.value,
+                    confidence=scan_result.confidence,
+                    detection_method=scan_result.detection_method,
+                    action_taken=ThreatAction.QUARANTINE,
+                    timestamp=datetime.now(),
+                    metadata={
+                        'event_type': event.event_type.value,
+                        'scan_result': {
+                            'heuristic_score': scan_result.heuristic_score,
+                            'behavioral_score': scan_result.behavioral_score,
+                            'ml_score': scan_result.ml_score,
+                            'signature_score': scan_result.signature_score
+                        }
+                    }
                 )
                 
-                if quarantine_result['success']:
-                    self.logger.info(f"File quarantined: {file_path}")
-                else:
-                    self.logger.error(f"Failed to quarantine: {file_path}")
-            
-            # Send alert
-            self._send_threat_alert(file_path, scan_result, event)
+                self._handle_threat(threat_detection)
+                
+            elif scan_result.threat_level.value == 'suspicious':
+                # Log suspicious files but don't quarantine
+                self.logger.warning(f"Suspicious file detected: {event.file_path}")
+                self._send_alert(event.file_path, "Suspicious file detected", scan_result.confidence)
             
         except Exception as e:
-            self.logger.error(f"Error handling threat {file_path}: {e}")
+            self.logger.error(f"Error handling event for {event.file_path}: {e}")
     
-    def _send_threat_alert(self, file_path: str, scan_result: Dict[str, Any], event: Dict[str, Any]):
-        """Send threat detection alert"""
+    def _handle_threat(self, threat: ThreatDetection):
+        """Handle detected threat"""
+        try:
+            self.logger.critical(f"THREAT DETECTED: {threat.threat_name} in {threat.file_path}")
+            
+            # Take action based on configuration
+            action_taken = False
+            
+            if threat.action_taken == ThreatAction.QUARANTINE and self.quarantine_manager:
+                try:
+                    quarantine_id = self.quarantine_manager.quarantine_file(
+                        threat.file_path,
+                        threat.threat_name,
+                        threat.detection_method,
+                        threat.metadata
+                    )
+                    
+                    if quarantine_id:
+                        self.logger.info(f"File quarantined: {threat.file_path} -> {quarantine_id}")
+                        self.stats['files_quarantined'] += 1
+                        action_taken = True
+                    
+                except Exception as e:
+                    self.logger.error(f"Quarantine failed: {e}")
+            
+            if not action_taken and threat.action_taken == ThreatAction.DELETE:
+                try:
+                    Path(threat.file_path).unlink()
+                    self.logger.info(f"Threat file deleted: {threat.file_path}")
+                    action_taken = True
+                    
+                except Exception as e:
+                    self.logger.error(f"File deletion failed: {e}")
+            
+            # Send alert regardless of action taken
+            self._send_alert(
+                threat.file_path,
+                f"THREAT: {threat.threat_name}",
+                threat.confidence,
+                threat.threat_level
+            )
+            
+            self.stats['threats_detected'] += 1
+            
+        except Exception as e:
+            self.logger.error(f"Error handling threat: {e}")
+    
+    def _send_alert(self, file_path: str, message: str, confidence: float, 
+                   threat_level: str = "unknown"):
+        """Send threat alert"""
         try:
             alert_data = {
                 'timestamp': datetime.now().isoformat(),
                 'file_path': file_path,
-                'event_type': event.get('event_type'),
-                'classification': scan_result['classification'],
-                'threat_score': scan_result.get('threat_score', 0.0),
-                'detections': scan_result.get('detections', []),
-                'system_info': {
-                    'hostname': os.uname().nodename if hasattr(os, 'uname') else 'unknown',
-                    'user': os.getenv('USER') or os.getenv('USERNAME', 'unknown'),
-                    'process_id': os.getpid()
-                }
+                'message': message,
+                'confidence': confidence,
+                'threat_level': threat_level,
+                'hostname': platform.node()
             }
             
-            # Store alert in database
+            # Log alert
+            self.logger.warning(f"ALERT: {message} - {file_path} (confidence: {confidence:.2f})")
+            
+            # Store alert (could be extended to send notifications)
             self._store_alert(alert_data)
             
-            # Send notifications (email, webhook, etc.)
-            self._send_notifications(alert_data)
-            
         except Exception as e:
-            self.logger.error(f"Error sending threat alert: {e}")
+            self.logger.error(f"Failed to send alert: {e}")
     
     def _store_alert(self, alert_data: Dict[str, Any]):
-        """Store alert in database"""
+        """Store alert data"""
         try:
-            query = """
-                INSERT INTO threat_alerts 
-                (file_path, event_type, classification, threat_score, alert_data, created_at)
-                VALUES (:file_path, :event_type, :classification, :threat_score, :alert_data, CURRENT_TIMESTAMP)
-            """
+            # Simple file-based alert storage
+            alerts_dir = Path.home() / ".prashant918_antivirus" / "alerts"
+            alerts_dir.mkdir(parents=True, exist_ok=True)
             
-            params = {
-                'file_path': alert_data['file_path'],
-                'event_type': alert_data['event_type'],
-                'classification': alert_data['classification'],
-                'threat_score': alert_data['threat_score'],
-                'alert_data': json.dumps(alert_data)
-            }
-            
-            db_manager.execute_command(query, params)
+            alert_file = alerts_dir / f"alert_{int(time.time())}.json"
+            with open(alert_file, 'w') as f:
+                json.dump(alert_data, f, indent=2)
             
         except Exception as e:
-            self.logger.error(f"Error storing alert: {e}")
+            self.logger.debug(f"Failed to store alert: {e}")
     
-    def _send_notifications(self, alert_data: Dict[str, Any]):
-        """Send notifications via configured channels"""
-        # Implementation for email, webhook, SIEM integration, etc.
-        pass
-    
-    def _log_event(self, event: Dict[str, Any], scan_result: Dict[str, Any]):
-        """Log file system event"""
+    def _clean_cache(self):
+        """Clean old cache entries"""
         try:
-            log_entry = {
-                'timestamp': datetime.now().isoformat(),
-                'event': event,
-                'scan_result': {
-                    'classification': scan_result['classification'],
-                    'threat_score': scan_result.get('threat_score', 0.0),
-                    'scan_time': scan_result.get('scan_time', 0.0)
-                }
-            }
+            current_time = time.time()
+            expired_keys = []
             
-            self.logger.debug(f"Event logged: {json.dumps(log_entry)}")
+            for key, timestamp in self.scan_cache.items():
+                if current_time - timestamp > self.cache_timeout:
+                    expired_keys.append(key)
+            
+            for key in expired_keys:
+                del self.scan_cache[key]
             
         except Exception as e:
-            self.logger.error(f"Error logging event: {e}")
-
-
-class RealtimeMonitor:
-    """Advanced real-time file system monitoring"""
+            self.logger.debug(f"Cache cleanup error: {e}")
     
-    def __init__(self):
-        self.logger = SecureLogger("RealtimeMonitor")
-        self.threat_engine = AdvancedThreatDetectionEngine()
-        self.event_processor = FileSystemEventProcessor(self.threat_engine)
-        
-        # Monitoring state
-        self.is_monitoring = False
-        self.monitored_paths = set()
-        self.observers = []
-        
-        # Platform-specific monitors
-        self.platform_monitor = None
-        self._initialize_platform_monitor()
-        
-        # Performance monitoring
-        self.stats = {
-            'events_processed': 0,
-            'threats_detected': 0,
-            'files_quarantined': 0,
-            'start_time': None
-        }
-    
-    def _initialize_platform_monitor(self):
-        """Initialize platform-specific monitoring"""
-        try:
-            if sys.platform == "win32":
-                self.platform_monitor = WindowsRealtimeMonitor(self.event_processor)
-            elif sys.platform.startswith("linux"):
-                self.platform_monitor = LinuxRealtimeMonitor(self.event_processor)
-            elif sys.platform == "darwin":
-                self.platform_monitor = MacOSRealtimeMonitor(self.event_processor)
-            else:
-                self.logger.warning(f"Platform {sys.platform} not fully supported, using generic monitor")
-                self.platform_monitor = GenericRealtimeMonitor(self.event_processor)
-                
-        except Exception as e:
-            self.logger.error(f"Failed to initialize platform monitor: {e}")
-            self.platform_monitor = GenericRealtimeMonitor(self.event_processor)
-    
-    def start_monitoring(self, paths: List[str] = None):
-        """Start real-time monitoring"""
-        try:
-            if self.is_monitoring:
-                self.logger.warning("Monitoring already active")
-                return
-            
-            if not paths:
-                paths = ['.']  # Current directory by default
-            
-            self.logger.info(f"Starting real-time monitoring for paths: {paths}")
-            
-            # Start event processor
-            self.event_processor.start_processing()
-            
-            # Start platform-specific monitoring
-            if self.platform_monitor:
-                self.platform_monitor.start_monitoring(paths)
-            
-            # Start generic watchdog monitoring as fallback
-            self._start_watchdog_monitoring(paths)
-            
-            self.monitored_paths.update(paths)
-            self.is_monitoring = True
-            self.stats['start_time'] = datetime.now()
-            
-            self.logger.info("Real-time monitoring started successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to start monitoring: {e}")
-            raise AntivirusError(f"Failed to start real-time monitoring: {e}")
-    
-    def stop_monitoring(self):
-        """Stop real-time monitoring"""
-        try:
-            if not self.is_monitoring:
-                return
-            
-            self.logger.info("Stopping real-time monitoring...")
-            
-            # Stop platform-specific monitoring
-            if self.platform_monitor:
-                self.platform_monitor.stop_monitoring()
-            
-            # Stop watchdog observers
-            for observer in self.observers:
-                observer.stop()
-                observer.join()
-            
-            self.observers.clear()
-            
-            # Stop event processor
-            self.event_processor.stop_processing()
-            
-            self.is_monitoring = False
-            self.monitored_paths.clear()
-            
-            self.logger.info("Real-time monitoring stopped")
-            
-        except Exception as e:
-            self.logger.error(f"Error stopping monitoring: {e}")
-    
-    def _start_watchdog_monitoring(self, paths: List[str]):
-        """Start watchdog-based monitoring as fallback"""
-        try:
-            for path in paths:
-                if os.path.exists(path):
-                    event_handler = WatchdogEventHandler(self.event_processor)
-                    observer = WatchdogObserver()
-                    observer.schedule(event_handler, path, recursive=True)
-                    observer.start()
-                    self.observers.append(observer)
-                    
-        except Exception as e:
-            self.logger.error(f"Failed to start watchdog monitoring: {e}")
-    
-    def get_status(self) -> Dict[str, Any]:
-        """Get monitoring status"""
-        return {
-            'is_monitoring': self.is_monitoring,
-            'monitored_paths': list(self.monitored_paths),
-            'platform': sys.platform,
-            'stats': self.stats.copy(),
-            'uptime': self._get_uptime(),
-            'event_queue_size': self.event_processor.event_queue.qsize()
-        }
-    
-    def _get_uptime(self) -> Optional[str]:
-        """Get monitoring uptime"""
-        if self.stats['start_time']:
-            uptime = datetime.now() - self.stats['start_time']
-            return str(uptime)
-        return None
-    
-    def add_monitored_path(self, path: str):
-        """Add path to monitoring"""
-        if self.is_monitoring and os.path.exists(path):
-            # Add to existing monitoring
-            pass
-    
-    def remove_monitored_path(self, path: str):
-        """Remove path from monitoring"""
-        if path in self.monitored_paths:
-            # Remove from monitoring
-            pass
-
+    def get_statistics(self) -> Dict[str, Any]:
+        """Get processing statistics"""
+        return self.stats.copy()
 
 class WatchdogEventHandler(FileSystemEventHandler):
     """Watchdog event handler"""
@@ -421,175 +399,505 @@ class WatchdogEventHandler(FileSystemEventHandler):
     def __init__(self, event_processor: FileSystemEventProcessor):
         super().__init__()
         self.event_processor = event_processor
+        self.logger = SecureLogger("WatchdogHandler")
     
-    def on_created(self, event: FileSystemEvent):
+    def on_created(self, event):
+        """Handle file creation"""
         if not event.is_directory:
-            self.event_processor.queue_event({
-                'path': event.src_path,
-                'event_type': 'created',
-                'timestamp': datetime.now().isoformat()
-            })
+            fs_event = FileSystemEvent(
+                event_type=EventType.CREATED,
+                file_path=event.src_path,
+                timestamp=datetime.now()
+            )
+            self.event_processor.queue_event(fs_event)
     
-    def on_modified(self, event: FileSystemEvent):
+    def on_modified(self, event):
+        """Handle file modification"""
         if not event.is_directory:
-            self.event_processor.queue_event({
-                'path': event.src_path,
-                'event_type': 'modified',
-                'timestamp': datetime.now().isoformat()
-            })
+            fs_event = FileSystemEvent(
+                event_type=EventType.MODIFIED,
+                file_path=event.src_path,
+                timestamp=datetime.now()
+            )
+            self.event_processor.queue_event(fs_event)
     
-    def on_moved(self, event: FileSystemEvent):
+    def on_moved(self, event):
+        """Handle file move"""
         if not event.is_directory:
-            self.event_processor.queue_event({
-                'path': event.dest_path,
-                'event_type': 'moved',
-                'timestamp': datetime.now().isoformat(),
-                'src_path': event.src_path
-            })
+            fs_event = FileSystemEvent(
+                event_type=EventType.MOVED,
+                file_path=event.dest_path,
+                timestamp=datetime.now(),
+                metadata={'src_path': event.src_path}
+            )
+            self.event_processor.queue_event(fs_event)
 
-
-# Platform-specific monitor implementations would go here...
-class WindowsRealtimeMonitor:
-    """Windows-specific real-time monitoring using WMI and Win32 APIs"""
+class GenericRealtimeMonitor:
+    """Generic cross-platform monitor using watchdog"""
     
     def __init__(self, event_processor: FileSystemEventProcessor):
+        self.logger = SecureLogger("GenericMonitor")
         self.event_processor = event_processor
+        self.observers = []
+        self.is_monitoring = False
+    
+    def start_monitoring(self, paths: List[str]):
+        """Start monitoring specified paths"""
+        if not HAS_WATCHDOG:
+            self.logger.warning("Watchdog not available, using generic monitor")
+            self.is_monitoring = True
+            return
+        
+        for path in paths:
+            if os.path.exists(path):
+                event_handler = WatchdogEventHandler(self.event_processor)
+                observer = Observer()
+                observer.schedule(event_handler, path, recursive=True)
+                observer.start()
+                self.observers.append(observer)
+    
+    def stop_monitoring(self):
+        """Stop monitoring"""
+        for observer in self.observers:
+            observer.stop()
+            observer.join()
+        self.observers.clear()
+        self.is_monitoring = False
+
+class WindowsRealtimeMonitor:
+    """Windows-specific real-time monitor"""
+    
+    def __init__(self, event_processor: FileSystemEventProcessor):
         self.logger = SecureLogger("WindowsMonitor")
-        self.wmi_connection = None
-        self.monitoring_thread = None
-        self.stop_monitoring_flag = threading.Event()
+        self.event_processor = event_processor
+        self.monitoring_threads = []
+        self.is_monitoring = False
+        self.stop_event = threading.Event()
     
     def start_monitoring(self, paths: List[str]):
         """Start Windows-specific monitoring"""
+        if not HAS_WIN32:
+            self.logger.warning("Win32 API not available, falling back to generic monitor")
+            return False
+        
         try:
-            self.wmi_connection = wmi.WMI()
-            self.stop_monitoring_flag.clear()
+            self.stop_monitoring()
+            self.stop_event.clear()
             
-            self.monitoring_thread = threading.Thread(
-                target=self._monitor_file_events,
-                args=(paths,),
-                daemon=True
-            )
-            self.monitoring_thread.start()
+            for path in paths:
+                if Path(path).exists():
+                    thread = threading.Thread(
+                        target=self._monitor_directory,
+                        args=(path,),
+                        daemon=True
+                    )
+                    thread.start()
+                    self.monitoring_threads.append(thread)
+                    self.logger.info(f"Started Windows monitoring: {path}")
+                else:
+                    self.logger.warning(f"Path does not exist: {path}")
             
-            self.logger.info("Windows real-time monitoring started")
+            self.is_monitoring = True
+            return True
             
         except Exception as e:
             self.logger.error(f"Failed to start Windows monitoring: {e}")
+            return False
+    
+    def _monitor_directory(self, path: str):
+        """Monitor directory using Windows API"""
+        try:
+            path_handle = win32file.CreateFile(
+                path,
+                win32file.GENERIC_READ,
+                win32file.FILE_SHARE_READ | win32file.FILE_SHARE_WRITE | win32file.FILE_SHARE_DELETE,
+                None,
+                win32file.OPEN_EXISTING,
+                win32file.FILE_FLAG_BACKUP_SEMANTICS,
+                None
+            )
+            
+            while not self.stop_event.is_set():
+                try:
+                    results = win32file.ReadDirectoryChangesW(
+                        path_handle,
+                        1024,
+                        True,
+                        win32con.FILE_NOTIFY_CHANGE_FILE_NAME |
+                        win32con.FILE_NOTIFY_CHANGE_LAST_WRITE |
+                        win32con.FILE_NOTIFY_CHANGE_CREATION,
+                        None,
+                        None
+                    )
+                    
+                    for action, filename in results:
+                        if self.stop_event.is_set():
+                            break
+                        
+                        full_path = os.path.join(path, filename)
+                        event_type = self._map_windows_action(action)
+                        
+                        if event_type:
+                            fs_event = FileSystemEvent(
+                                event_type=event_type,
+                                file_path=full_path,
+                                timestamp=datetime.now()
+                            )
+                            self.event_processor.queue_event(fs_event)
+                
+                except Exception as e:
+                    if not self.stop_event.is_set():
+                        self.logger.error(f"Error in Windows directory monitoring: {e}")
+                    break
+            
+            win32file.CloseHandle(path_handle)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to monitor directory {path}: {e}")
+    
+    def _map_windows_action(self, action: int) -> Optional[EventType]:
+        """Map Windows file action to EventType"""
+        action_map = {
+            win32con.FILE_ACTION_ADDED: EventType.CREATED,
+            win32con.FILE_ACTION_MODIFIED: EventType.MODIFIED,
+            win32con.FILE_ACTION_REMOVED: EventType.DELETED,
+            win32con.FILE_ACTION_RENAMED_OLD_NAME: EventType.MOVED,
+            win32con.FILE_ACTION_RENAMED_NEW_NAME: EventType.MOVED,
+        }
+        return action_map.get(action)
     
     def stop_monitoring(self):
         """Stop Windows monitoring"""
-        self.stop_monitoring_flag.set()
-        if self.monitoring_thread:
-            self.monitoring_thread.join(timeout=5)
+        try:
+            self.stop_event.set()
+            
+            for thread in self.monitoring_threads:
+                thread.join(timeout=5)
+            
+            self.monitoring_threads.clear()
+            self.is_monitoring = False
+            self.logger.info("Windows monitoring stopped")
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping Windows monitoring: {e}")
     
-    def _monitor_file_events(self, paths: List[str]):
-        """Monitor file events using WMI"""
-        # Implementation for Windows file monitoring
-        pass
-
+    def is_active(self) -> bool:
+        """Check if monitoring is active"""
+        return self.is_monitoring and any(thread.is_alive() for thread in self.monitoring_threads)
 
 class LinuxRealtimeMonitor:
-    """Linux-specific real-time monitoring using inotify"""
+    """Linux-specific real-time monitor using inotify"""
     
     def __init__(self, event_processor: FileSystemEventProcessor):
-        self.event_processor = event_processor
         self.logger = SecureLogger("LinuxMonitor")
-        self.inotify = None
+        self.event_processor = event_processor
         self.monitoring_thread = None
-        self.stop_monitoring_flag = threading.Event()
+        self.is_monitoring = False
+        self.stop_event = threading.Event()
+        self.watch_descriptors = {}
     
     def start_monitoring(self, paths: List[str]):
-        """Start Linux-specific monitoring"""
+        """Start Linux inotify monitoring"""
+        if not HAS_INOTIFY:
+            self.logger.warning("inotify not available, falling back to generic monitor")
+            return False
+        
         try:
-            self.inotify = INotify()
-            self.stop_monitoring_flag.clear()
+            import inotify.adapters
             
-            # Add watches for paths
-            for path in paths:
-                if os.path.exists(path):
-                    self.inotify.add_watch(
-                        path,
-                        flags.CREATE | flags.MODIFY | flags.MOVED_TO
-                    )
+            self.stop_monitoring()
+            self.stop_event.clear()
+            
+            self.inotify = inotify.adapters.InotifyTree(paths)
             
             self.monitoring_thread = threading.Thread(
-                target=self._monitor_inotify_events,
+                target=self._monitor_events,
                 daemon=True
             )
             self.monitoring_thread.start()
             
-            self.logger.info("Linux real-time monitoring started")
+            self.is_monitoring = True
+            self.logger.info(f"Started Linux inotify monitoring for: {paths}")
+            return True
             
+        except ImportError:
+            self.logger.warning("inotify library not available")
+            return False
         except Exception as e:
             self.logger.error(f"Failed to start Linux monitoring: {e}")
+            return False
+    
+    def _monitor_events(self):
+        """Monitor inotify events"""
+        try:
+            for event in self.inotify.event_gen(yield_nones=False):
+                if self.stop_event.is_set():
+                    break
+                
+                (_, type_names, path, filename) = event
+                
+                if filename:
+                    full_path = os.path.join(path, filename)
+                    event_type = self._map_inotify_event(type_names)
+                    
+                    if event_type:
+                        fs_event = FileSystemEvent(
+                            event_type=event_type,
+                            file_path=full_path,
+                            timestamp=datetime.now()
+                        )
+                        self.event_processor.queue_event(fs_event)
+        
+        except Exception as e:
+            if not self.stop_event.is_set():
+                self.logger.error(f"Error in Linux inotify monitoring: {e}")
+    
+    def _map_inotify_event(self, type_names: List[str]) -> Optional[EventType]:
+        """Map inotify event types to EventType"""
+        if 'IN_CREATE' in type_names:
+            return EventType.CREATED
+        elif 'IN_MODIFY' in type_names:
+            return EventType.MODIFIED
+        elif 'IN_DELETE' in type_names:
+            return EventType.DELETED
+        elif 'IN_MOVED_TO' in type_names or 'IN_MOVED_FROM' in type_names:
+            return EventType.MOVED
+        return None
     
     def stop_monitoring(self):
         """Stop Linux monitoring"""
-        self.stop_monitoring_flag.set()
-        if self.inotify:
-            self.inotify.close()
-        if self.monitoring_thread:
-            self.monitoring_thread.join(timeout=5)
-    
-    def _monitor_inotify_events(self):
-        """Monitor inotify events"""
-        # Implementation for Linux inotify monitoring
-        pass
-
-
-class MacOSRealtimeMonitor:
-    """macOS-specific real-time monitoring using FSEvents"""
-    
-    def __init__(self, event_processor: FileSystemEventProcessor):
-        self.event_processor = event_processor
-        self.logger = SecureLogger("MacOSMonitor")
-        self.observer = None
-        self.streams = []
-    
-    def start_monitoring(self, paths: List[str]):
-        """Start macOS-specific monitoring"""
         try:
-            self.observer = Observer()
+            self.stop_event.set()
             
-            for path in paths:
-                if os.path.exists(path):
-                    stream = Stream(
-                        self._handle_fs_event,
-                        path,
-                        file_events=True
-                    )
-                    self.streams.append(stream)
+            if self.monitoring_thread and self.monitoring_thread.is_alive():
+                self.monitoring_thread.join(timeout=5)
             
-            self.observer.start()
-            self.logger.info("macOS real-time monitoring started")
+            self.is_monitoring = False
+            self.logger.info("Linux monitoring stopped")
             
         except Exception as e:
-            self.logger.error(f"Failed to start macOS monitoring: {e}")
+            self.logger.error(f"Error stopping Linux monitoring: {e}")
+    
+    def is_active(self) -> bool:
+        """Check if monitoring is active"""
+        return self.is_monitoring and (
+            self.monitoring_thread and self.monitoring_thread.is_alive()
+        )
+
+class MacOSRealtimeMonitor:
+    """macOS-specific real-time monitor using FSEvents"""
+    
+    def __init__(self, event_processor: FileSystemEventProcessor):
+        self.logger = SecureLogger("MacOSMonitor")
+        self.event_processor = event_processor
+        self.is_monitoring = False
+    
+    def start_monitoring(self, paths: List[str]):
+        """Start macOS FSEvents monitoring"""
+        self.logger.warning("macOS FSEvents monitoring not implemented, falling back to generic monitor")
+        return False
     
     def stop_monitoring(self):
         """Stop macOS monitoring"""
-        if self.observer:
-            self.observer.stop()
-        self.streams.clear()
+        self.is_monitoring = False
     
-    def _handle_fs_event(self, event):
-        """Handle FSEvents"""
-        # Implementation for macOS FSEvents monitoring
-        pass
+    def is_active(self) -> bool:
+        """Check if monitoring is active"""
+        return self.is_monitoring
 
-
-class GenericRealtimeMonitor:
-    """Generic cross-platform monitoring fallback"""
+class RealtimeMonitor:
+    """Main real-time monitoring coordinator"""
     
-    def __init__(self, event_processor: FileSystemEventProcessor):
-        self.event_processor = event_processor
-        self.logger = SecureLogger("GenericMonitor")
+    def __init__(self, threat_engine=None, quarantine_manager=None):
+        self.logger = SecureLogger("RealtimeMonitor")
+        
+        # Initialize event processor
+        self.event_processor = FileSystemEventProcessor(threat_engine, quarantine_manager)
+        
+        # Choose platform-specific monitor
+        self.platform_monitor = self._create_platform_monitor()
+        
+        # Monitoring state
+        self.is_monitoring = False
+        self.monitored_paths = set()
+        self.start_time = None
+        
+        # Statistics
+        self.stats = {
+            'monitoring_sessions': 0,
+            'total_uptime': 0,
+            'paths_monitored': 0,
+            'platform_monitor': type(self.platform_monitor).__name__
+        }
+    
+    def _create_platform_monitor(self):
+        """Create appropriate platform-specific monitor"""
+        if PLATFORM == "windows" and HAS_WIN32:
+            return WindowsRealtimeMonitor(self.event_processor)
+        elif PLATFORM == "linux" and HAS_INOTIFY:
+            return LinuxRealtimeMonitor(self.event_processor)
+        elif PLATFORM == "darwin" and HAS_FSEVENTS:
+            return MacOSRealtimeMonitor(self.event_processor)
+        else:
+            self.logger.info(f"Using generic monitor for platform: {PLATFORM}")
+            return GenericRealtimeMonitor(self.event_processor)
     
     def start_monitoring(self, paths: List[str]):
-        """Start generic monitoring"""
-        self.logger.info("Using generic monitoring (watchdog only)")
+        """Start real-time monitoring"""
+        try:
+            if self.is_monitoring:
+                self.logger.warning("Monitoring already active")
+                return True
+            
+            # Validate paths
+            valid_paths = []
+            for path in paths:
+                path_obj = Path(path)
+                if path_obj.exists():
+                    valid_paths.append(str(path_obj.absolute()))
+                else:
+                    self.logger.warning(f"Path does not exist: {path}")
+            
+            if not valid_paths:
+                self.logger.error("No valid paths to monitor")
+                return False
+            
+            # Start event processor
+            self.event_processor.start_processing()
+            
+            # Start platform-specific monitoring
+            if self.platform_monitor.start_monitoring(valid_paths):
+                self.is_monitoring = True
+                self.monitored_paths = set(valid_paths)
+                self.start_time = time.time()
+                self.stats['monitoring_sessions'] += 1
+                self.stats['paths_monitored'] = len(valid_paths)
+                
+                self.logger.info(f"Real-time monitoring started for {len(valid_paths)} paths")
+                return True
+            else:
+                self.event_processor.stop_processing()
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Failed to start monitoring: {e}")
+            return False
     
     def stop_monitoring(self):
-        """Stop generic monitoring"""
-        pass
+        """Stop real-time monitoring"""
+        try:
+            if not self.is_monitoring:
+                return
+            
+            # Stop platform monitor
+            self.platform_monitor.stop_monitoring()
+            
+            # Stop event processor
+            self.event_processor.stop_processing()
+            
+            # Update statistics
+            if self.start_time:
+                session_uptime = time.time() - self.start_time
+                self.stats['total_uptime'] += session_uptime
+            
+            self.is_monitoring = False
+            self.monitored_paths.clear()
+            self.start_time = None
+            
+            self.logger.info("Real-time monitoring stopped")
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping monitoring: {e}")
+    
+    def add_monitored_path(self, path: str) -> bool:
+        """Add path to monitoring"""
+        try:
+            path_obj = Path(path)
+            if not path_obj.exists():
+                self.logger.error(f"Path does not exist: {path}")
+                return False
+            
+            abs_path = str(path_obj.absolute())
+            
+            if abs_path in self.monitored_paths:
+                self.logger.info(f"Path already monitored: {path}")
+                return True
+            
+            # Restart monitoring with updated paths
+            if self.is_monitoring:
+                current_paths = list(self.monitored_paths)
+                current_paths.append(abs_path)
+                
+                self.stop_monitoring()
+                return self.start_monitoring(current_paths)
+            else:
+                self.monitored_paths.add(abs_path)
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Failed to add monitored path: {e}")
+            return False
+    
+    def remove_monitored_path(self, path: str) -> bool:
+        """Remove path from monitoring"""
+        try:
+            abs_path = str(Path(path).absolute())
+            
+            if abs_path not in self.monitored_paths:
+                self.logger.info(f"Path not monitored: {path}")
+                return True
+            
+            # Restart monitoring with updated paths
+            if self.is_monitoring:
+                current_paths = list(self.monitored_paths)
+                current_paths.remove(abs_path)
+                
+                self.stop_monitoring()
+                if current_paths:
+                    return self.start_monitoring(current_paths)
+                else:
+                    return True
+            else:
+                self.monitored_paths.discard(abs_path)
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Failed to remove monitored path: {e}")
+            return False
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get monitoring status"""
+        try:
+            current_uptime = 0
+            if self.is_monitoring and self.start_time:
+                current_uptime = time.time() - self.start_time
+            
+            processor_stats = self.event_processor.get_statistics()
+            
+            return {
+                'is_monitoring': self.is_monitoring,
+                'platform_monitor_active': self.platform_monitor.is_active() if hasattr(self.platform_monitor, 'is_active') else self.is_monitoring,
+                'monitored_paths': list(self.monitored_paths),
+                'current_uptime': current_uptime,
+                'total_uptime': self.stats['total_uptime'] + current_uptime,
+                'monitoring_sessions': self.stats['monitoring_sessions'],
+                'platform_monitor': self.stats['platform_monitor'],
+                'processor_stats': processor_stats,
+                'capabilities': {
+                    'has_watchdog': HAS_WATCHDOG,
+                    'has_win32': HAS_WIN32,
+                    'has_inotify': HAS_INOTIFY,
+                    'has_fsevents': HAS_FSEVENTS,
+                    'platform': PLATFORM
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error getting status: {e}")
+            return {'error': str(e)}
+    
+    def _get_uptime(self) -> float:
+        """Get current session uptime"""
+        if self.is_monitoring and self.start_time:
+            return time.time() - self.start_time
+        return 0.0

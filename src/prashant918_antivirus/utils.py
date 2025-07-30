@@ -1,1007 +1,663 @@
 """
-Prashant918 Advanced Antivirus - Utility Functions
-
-Common utility functions and helpers used throughout the
-cybersecurity platform for various operations and tasks.
+Prashant918 Advanced Antivirus - Enhanced Utility Functions
+Cross-platform utility functions with comprehensive system support
 """
 
 import os
 import sys
+import hashlib
+import tempfile
+import shutil
 import platform
 import subprocess
-import hashlib
 import json
 import time
-import threading
-import functools
-import importlib
-from typing import Dict, Any, List, Optional, Callable, Union, Tuple
-from datetime import datetime, timedelta
+import re
 from pathlib import Path
-import logging
+from typing import Dict, List, Optional, Any, Union, Tuple
+from datetime import datetime
 
-# Package imports
-from .exceptions import AntivirusError, ValidationError, ResourceError
+# Core imports with error handling
+try:
+    from .logger import SecureLogger
+except ImportError:
+    import logging
+    SecureLogger = logging.getLogger
 
+try:
+    from .config import secure_config
+except ImportError:
+    secure_config = type('Config', (), {'get': lambda self, key, default=None: default})()
 
-def initialize(config_path: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Initialize the antivirus system with configuration
-    
-    Args:
-        config_path: Path to configuration file
-    
-    Returns:
-        Initialization status and information
-    """
-    try:
-        init_info = {
-            "status": "success",
-            "timestamp": datetime.now().isoformat(),
-            "version": get_version_info(),
-            "system": get_system_info(),
-            "dependencies": check_dependencies(),
-            "configuration": {}
-        }
-        
-        # Create necessary directories
-        directories = [
-            "data",
-            "data/yara_rules",
-            "logs",
-            "config",
-            "quarantine",
-            "models",
-            "signatures",
-            "temp"
-        ]
-        
-        created_dirs = []
-        for directory in directories:
-            if not os.path.exists(directory):
-                os.makedirs(directory, exist_ok=True)
-                created_dirs.append(directory)
-                
-                # Set secure permissions on Unix-like systems
-                if os.name != 'nt':
-                    if directory in ["logs", "config", "quarantine"]:
-                        os.chmod(directory, 0o700)
-                    else:
-                        os.chmod(directory, 0o755)
-        
-        init_info["created_directories"] = created_dirs
-        
-        # Load configuration if provided
-        if config_path and os.path.exists(config_path):
-            try:
-                with open(config_path, 'r') as f:
-                    if config_path.endswith('.json'):
-                        config_data = json.load(f)
-                    else:
-                        # Assume YAML
-                        import yaml
-                        config_data = yaml.safe_load(f)
-                
-                init_info["configuration"] = config_data
-            except Exception as e:
-                init_info["configuration_error"] = str(e)
-        
-        return init_info
-        
-    except Exception as e:
-        return {
-            "status": "failed",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
+# Optional imports
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+    psutil = None
 
+try:
+    import magic
+    HAS_MAGIC = True
+except ImportError:
+    HAS_MAGIC = False
+    magic = None
 
-def get_version_info() -> Dict[str, Any]:
-    """Get comprehensive version information"""
-    try:
-        from . import __version__, __author__, __license__
-        
-        return {
-            "version": __version__,
-            "author": __author__,
-            "license": __license__,
-            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-            "platform": platform.platform(),
-            "architecture": platform.architecture()[0],
-            "build_date": "2024-01-01",  # This would be set during build
-            "git_commit": get_git_commit_hash(),
-        }
-    except ImportError:
-        return {
-            "version": "unknown",
-            "error": "Version information not available"
-        }
-
+# Platform detection
+PLATFORM = platform.system().lower()
+ARCHITECTURE = platform.machine().lower()
 
 def get_system_info() -> Dict[str, Any]:
     """Get comprehensive system information"""
     try:
-        import psutil
-        
-        # Memory information
-        memory = psutil.virtual_memory()
-        
-        # Disk information
-        disk = psutil.disk_usage('.')
-        
-        # CPU information
-        cpu_info = {
-            "physical_cores": psutil.cpu_count(logical=False),
-            "logical_cores": psutil.cpu_count(logical=True),
-            "cpu_freq": psutil.cpu_freq()._asdict() if psutil.cpu_freq() else {},
-            "cpu_percent": psutil.cpu_percent(interval=1)
-        }
-        
-        # Network information
-        network_info = {}
-        try:
-            network_stats = psutil.net_io_counters()
-            network_info = {
-                "bytes_sent": network_stats.bytes_sent,
-                "bytes_recv": network_stats.bytes_recv,
-                "packets_sent": network_stats.packets_sent,
-                "packets_recv": network_stats.packets_recv
-            }
-        except:
-            network_info = {"error": "Network stats not available"}
-        
-        return {
-            "platform": {
-                "system": platform.system(),
-                "release": platform.release(),
-                "version": platform.version(),
-                "machine": platform.machine(),
-                "processor": platform.processor(),
-                "node": platform.node()
+        info = {
+            'platform': {
+                'system': platform.system(),
+                'release': platform.release(),
+                'version': platform.version(),
+                'machine': platform.machine(),
+                'processor': platform.processor(),
+                'architecture': platform.architecture(),
+                'python_version': platform.python_version(),
+                'python_implementation': platform.python_implementation()
             },
-            "python": {
-                "version": sys.version,
-                "executable": sys.executable,
-                "path": sys.path[:3]  # First 3 paths only
+            'paths': {
+                'home': str(Path.home()),
+                'temp': tempfile.gettempdir(),
+                'cwd': os.getcwd()
             },
-            "memory": {
-                "total_gb": round(memory.total / (1024**3), 2),
-                "available_gb": round(memory.available / (1024**3), 2),
-                "used_percent": memory.percent,
-                "free_gb": round(memory.free / (1024**3), 2)
-            },
-            "disk": {
-                "total_gb": round(disk.total / (1024**3), 2),
-                "free_gb": round(disk.free / (1024**3), 2),
-                "used_gb": round(disk.used / (1024**3), 2),
-                "used_percent": round((disk.used / disk.total) * 100, 2)
-            },
-            "cpu": cpu_info,
-            "network": network_info,
-            "environment": {
-                "user": os.getenv("USER") or os.getenv("USERNAME", "unknown"),
-                "home": os.path.expanduser("~"),
-                "cwd": os.getcwd(),
-                "path_separator": os.pathsep,
-                "line_separator": os.linesep
+            'environment': {
+                'user': os.environ.get('USER') or os.environ.get('USERNAME', 'Unknown'),
+                'path_separator': os.pathsep,
+                'line_separator': os.linesep
             }
         }
         
-    except ImportError:
-        return {
-            "error": "psutil not available",
-            "basic_info": {
-                "platform": platform.platform(),
-                "python_version": sys.version,
-                "cwd": os.getcwd()
-            }
-        }
-    except Exception as e:
-        return {
-            "error": f"Failed to get system info: {e}",
-            "platform": platform.platform()
-        }
-
-
-def check_dependencies() -> Dict[str, Any]:
-    """Check all dependencies and their versions"""
-    dependencies = {
-        "required": {
-            "cryptography": ">=41.0.0",
-            "requests": ">=2.31.0",
-            "psutil": ">=5.9.0",
-            "numpy": ">=1.24.0",
-            "pandas": ">=2.0.0",
-            "sqlalchemy": ">=2.0.0",
-            "termcolor": ">=2.3.0",
-            "pyfiglet": ">=0.8.0"
-        },
-        "optional": {
-            "cx_Oracle": ">=8.3.0",
-            "yara-python": ">=4.3.1",
-            "python-magic": ">=0.4.27",
-            "pefile": ">=2023.2.7",
-            "tensorflow": ">=2.13.0",
-            "scikit-learn": ">=1.3.0"
-        },
-        "platform_specific": {
-            "pywin32": ">=306 (Windows only)",
-            "python-prctl": ">=1.8.1 (Linux only)",
-            "pyobjc": ">=9.2 (macOS only)"
-        }
-    }
-    
-    results = {
-        "status": "checking",
-        "required": {},
-        "optional": {},
-        "platform_specific": {},
-        "missing_required": [],
-        "missing_optional": [],
-        "overall_status": True
-    }
-    
-    # Check required dependencies
-    for module, version_req in dependencies["required"].items():
-        module_name = module.replace("-", "_")
-        try:
-            imported_module = importlib.import_module(module_name)
-            version = getattr(imported_module, "__version__", "unknown")
-            results["required"][module] = {
-                "available": True,
-                "version": version,
-                "requirement": version_req
-            }
-        except ImportError:
-            results["required"][module] = {
-                "available": False,
-                "version": None,
-                "requirement": version_req
-            }
-            results["missing_required"].append(module)
-            results["overall_status"] = False
-    
-    # Check optional dependencies
-    for module, version_req in dependencies["optional"].items():
-        module_name = module.replace("-", "_")
-        try:
-            imported_module = importlib.import_module(module_name)
-            version = getattr(imported_module, "__version__", "unknown")
-            results["optional"][module] = {
-                "available": True,
-                "version": version,
-                "requirement": version_req
-            }
-        except ImportError:
-            results["optional"][module] = {
-                "available": False,
-                "version": None,
-                "requirement": version_req
-            }
-            results["missing_optional"].append(module)
-    
-    # Check platform-specific dependencies
-    current_platform = platform.system().lower()
-    for module, version_req in dependencies["platform_specific"].items():
-        if ("windows" in version_req.lower() and current_platform == "windows") or \
-           ("linux" in version_req.lower() and current_platform == "linux") or \
-           ("macos" in version_req.lower() and current_platform == "darwin"):
-            
+        # Add memory and disk info if psutil is available
+        if HAS_PSUTIL:
             try:
-                imported_module = importlib.import_module(module)
-                version = getattr(imported_module, "__version__", "unknown")
-                results["platform_specific"][module] = {
-                    "available": True,
-                    "version": version,
-                    "requirement": version_req
+                memory = psutil.virtual_memory()
+                info['memory'] = {
+                    'total_gb': memory.total / (1024**3),
+                    'available_gb': memory.available / (1024**3),
+                    'used_gb': memory.used / (1024**3),
+                    'used_percent': memory.percent
                 }
-            except ImportError:
-                results["platform_specific"][module] = {
-                    "available": False,
-                    "version": None,
-                    "requirement": version_req
+                
+                disk = psutil.disk_usage('/')
+                info['disk'] = {
+                    'total_gb': disk.total / (1024**3),
+                    'free_gb': disk.free / (1024**3),
+                    'used_gb': disk.used / (1024**3),
+                    'used_percent': (disk.used / disk.total) * 100
                 }
-    
-    results["status"] = "completed"
-    return results
-
-
-def get_git_commit_hash() -> str:
-    """Get current git commit hash if available"""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()[:8]  # Short hash
-    except:
-        pass
-    return "unknown"
-
-
-def calculate_file_hash(file_path: str, algorithm: str = "sha256") -> str:
-    """
-    Calculate hash of a file
-    
-    Args:
-        file_path: Path to the file
-        algorithm: Hash algorithm (md5, sha1, sha256, sha512)
-    
-    Returns:
-        Hexadecimal hash string
-    """
-    if not os.path.isfile(file_path):
-        raise ValidationError(f"File not found: {file_path}")
-    
-    hash_algorithms = {
-        "md5": hashlib.md5,
-        "sha1": hashlib.sha1,
-        "sha256": hashlib.sha256,
-        "sha512": hashlib.sha512
-    }
-    
-    if algorithm not in hash_algorithms:
-        raise ValidationError(f"Unsupported hash algorithm: {algorithm}")
-    
-    hash_obj = hash_algorithms[algorithm]()
-    
-    try:
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                hash_obj.update(chunk)
-        return hash_obj.hexdigest()
+                
+                info['cpu'] = {
+                    'count': psutil.cpu_count(),
+                    'count_logical': psutil.cpu_count(logical=True),
+                    'percent': psutil.cpu_percent(interval=1)
+                }
+                
+            except Exception as e:
+                logger = SecureLogger("SystemInfo")
+                logger.debug(f"Error getting system stats: {e}")
+        
+        return info
+        
     except Exception as e:
-        raise AntivirusError(f"Failed to calculate hash for {file_path}: {e}")
+        logger = SecureLogger("SystemInfo")
+        logger.error(f"Error getting system info: {e}")
+        return {'error': str(e)}
 
+def calculate_file_hash(file_path: str, algorithm: str = 'sha256') -> Optional[str]:
+    """Calculate file hash with multiple algorithm support"""
+    try:
+        hash_obj = hashlib.new(algorithm.lower())
+        
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                hash_obj.update(chunk)
+        
+        return hash_obj.hexdigest()
+        
+    except Exception as e:
+        logger = SecureLogger("FileHash")
+        logger.error(f"Error calculating {algorithm} hash for {file_path}: {e}")
+        return None
 
-def calculate_multiple_hashes(file_path: str) -> Dict[str, str]:
-    """Calculate multiple hashes for a file efficiently"""
-    if not os.path.isfile(file_path):
-        raise ValidationError(f"File not found: {file_path}")
-    
-    hash_objects = {
-        "md5": hashlib.md5(),
-        "sha1": hashlib.sha1(),
-        "sha256": hashlib.sha256(),
-        "sha512": hashlib.sha512()
-    }
+def calculate_multiple_hashes(file_path: str) -> Dict[str, Optional[str]]:
+    """Calculate multiple hashes for a file"""
+    algorithms = ['md5', 'sha1', 'sha256', 'sha512']
+    hashes = {}
     
     try:
+        hash_objects = {alg: hashlib.new(alg) for alg in algorithms}
+        
         with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b""):
+            for chunk in iter(lambda: f.read(8192), b""):
                 for hash_obj in hash_objects.values():
                     hash_obj.update(chunk)
         
-        return {alg: hash_obj.hexdigest() for alg, hash_obj in hash_objects.items()}
+        for alg, hash_obj in hash_objects.items():
+            hashes[alg] = hash_obj.hexdigest()
+            
     except Exception as e:
-        raise AntivirusError(f"Failed to calculate hashes for {file_path}: {e}")
-
-
-def validate_file_path(file_path: str, check_exists: bool = True) -> bool:
-    """
-    Validate file path for security and existence
+        logger = SecureLogger("MultiHash")
+        logger.error(f"Error calculating hashes for {file_path}: {e}")
+        for alg in algorithms:
+            hashes[alg] = None
     
-    Args:
-        file_path: Path to validate
-        check_exists: Whether to check if file exists
-    
-    Returns:
-        True if valid, raises exception if invalid
-    """
-    if not file_path:
-        raise ValidationError("File path cannot be empty")
-    
-    # Normalize path
-    normalized_path = os.path.normpath(file_path)
-    
-    # Check for path traversal attempts
-    if ".." in normalized_path:
-        raise ValidationError(f"Path traversal detected in: {file_path}")
-    
-    # Check for absolute paths that might be suspicious
-    if os.path.isabs(normalized_path):
-        # Allow absolute paths but log them
-        pass
-    
-    # Check if file exists if required
-    if check_exists and not os.path.exists(normalized_path):
-        raise ValidationError(f"File does not exist: {file_path}")
-    
-    return True
-
-
-def safe_file_operation(operation: Callable, *args, **kwargs) -> Any:
-    """
-    Safely execute file operations with proper error handling
-    
-    Args:
-        operation: Function to execute
-        *args: Arguments for the operation
-        **kwargs: Keyword arguments for the operation
-    
-    Returns:
-        Result of the operation
-    """
-    try:
-        return operation(*args, **kwargs)
-    except PermissionError as e:
-        raise AntivirusError(f"Permission denied: {e}")
-    except FileNotFoundError as e:
-        raise ValidationError(f"File not found: {e}")
-    except OSError as e:
-        raise AntivirusError(f"OS error during file operation: {e}")
-    except Exception as e:
-        raise AntivirusError(f"Unexpected error during file operation: {e}")
-
-
-def format_bytes(bytes_value: int) -> str:
-    """Format bytes into human-readable string"""
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if bytes_value < 1024.0:
-            return f"{bytes_value:.1f} {unit}"
-        bytes_value /= 1024.0
-    return f"{bytes_value:.1f} PB"
-
-
-def format_duration(seconds: float) -> str:
-    """Format duration in seconds to human-readable string"""
-    if seconds < 1:
-        return f"{seconds*1000:.1f}ms"
-    elif seconds < 60:
-        return f"{seconds:.1f}s"
-    elif seconds < 3600:
-        minutes = int(seconds // 60)
-        secs = seconds % 60
-        return f"{minutes}m {secs:.1f}s"
-    else:
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = seconds % 60
-        return f"{hours}h {minutes}m {secs:.1f}s"
-
-
-def retry_operation(
-    operation: Callable,
-    max_attempts: int = 3,
-    delay: float = 1.0,
-    backoff_factor: float = 2.0,
-    exceptions: Tuple[type, ...] = (Exception,)
-) -> Callable:
-    """
-    Decorator for retrying operations with exponential backoff
-    
-    Args:
-        operation: Function to retry
-        max_attempts: Maximum number of attempts
-        delay: Initial delay between attempts
-        backoff_factor: Multiplier for delay after each attempt
-        exceptions: Tuple of exceptions to catch and retry
-    
-    Returns:
-        Decorated function
-    """
-    @functools.wraps(operation)
-    def wrapper(*args, **kwargs):
-        last_exception = None
-        current_delay = delay
-        
-        for attempt in range(max_attempts):
-            try:
-                return operation(*args, **kwargs)
-            except exceptions as e:
-                last_exception = e
-                if attempt < max_attempts - 1:
-                    time.sleep(current_delay)
-                    current_delay *= backoff_factor
-                else:
-                    break
-        
-        # If we get here, all attempts failed
-        raise AntivirusError(
-            f"Operation failed after {max_attempts} attempts",
-            details={"last_exception": str(last_exception)}
-        )
-    
-    return wrapper
-
-
-def timeout_operation(timeout_seconds: float):
-    """
-    Decorator to add timeout to operations
-    
-    Args:
-        timeout_seconds: Timeout in seconds
-    
-    Returns:
-        Decorated function
-    """
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            result = [None]
-            exception = [None]
-            
-            def target():
-                try:
-                    result[0] = func(*args, **kwargs)
-                except Exception as e:
-                    exception[0] = e
-            
-            thread = threading.Thread(target=target)
-            thread.daemon = True
-            thread.start()
-            thread.join(timeout_seconds)
-            
-            if thread.is_alive():
-                # Force thread termination (not recommended but necessary for timeout)
-                raise AntivirusError(
-                    f"Operation timed out after {timeout_seconds} seconds",
-                    error_code="TIMEOUT_ERROR"
-                )
-            
-            if exception[0]:
-                raise exception[0]
-            
-            return result[0]
-        
-        return wrapper
-    return decorator
-
-
-def validate_config_value(value: Any, expected_type: type, constraints: Optional[Dict] = None) -> bool:
-    """
-    Validate configuration value against type and constraints
-    
-    Args:
-        value: Value to validate
-        expected_type: Expected type
-        constraints: Additional constraints (min, max, choices, etc.)
-    
-    Returns:
-        True if valid, raises ValidationError if invalid
-    """
-    # Type check
-    if not isinstance(value, expected_type):
-        raise ValidationError(
-            f"Expected {expected_type.__name__}, got {type(value).__name__}",
-            field_value=value
-        )
-    
-    # Constraint checks
-    if constraints:
-        if 'min' in constraints and value < constraints['min']:
-            raise ValidationError(
-                f"Value {value} is below minimum {constraints['min']}",
-                field_value=value
-            )
-        
-        if 'max' in constraints and value > constraints['max']:
-            raise ValidationError(
-                f"Value {value} is above maximum {constraints['max']}",
-                field_value=value
-            )
-        
-        if 'choices' in constraints and value not in constraints['choices']:
-            raise ValidationError(
-                f"Value {value} not in allowed choices: {constraints['choices']}",
-                field_value=value
-            )
-        
-        if 'pattern' in constraints:
-            import re
-            if not re.match(constraints['pattern'], str(value)):
-                raise ValidationError(
-                    f"Value {value} does not match pattern {constraints['pattern']}",
-                    field_value=value
-                )
-    
-    return True
-
-
-def create_secure_temp_file(suffix: str = "", prefix: str = "av_temp_") -> str:
-    """
-    Create a secure temporary file
-    
-    Args:
-        suffix: File suffix
-        prefix: File prefix
-    
-    Returns:
-        Path to temporary file
-    """
-    import tempfile
-    
-    # Create temp directory if it doesn't exist
-    temp_dir = os.path.join(os.getcwd(), "temp")
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    # Set secure permissions
-    if os.name != 'nt':
-        os.chmod(temp_dir, 0o700)
-    
-    # Create temporary file
-    fd, temp_path = tempfile.mkstemp(
-        suffix=suffix,
-        prefix=prefix,
-        dir=temp_dir
-    )
-    
-    # Close file descriptor and set secure permissions
-    os.close(fd)
-    if os.name != 'nt':
-        os.chmod(temp_path, 0o600)
-    
-    return temp_path
-
-
-def cleanup_temp_files(max_age_hours: int = 24) -> int:
-    """
-    Clean up old temporary files
-    
-    Args:
-        max_age_hours: Maximum age of files to keep
-    
-    Returns:
-        Number of files cleaned up
-    """
-    temp_dir = os.path.join(os.getcwd(), "temp")
-    if not os.path.exists(temp_dir):
-        return 0
-    
-    cutoff_time = time.time() - (max_age_hours * 3600)
-    cleaned_count = 0
-    
-    try:
-        for filename in os.listdir(temp_dir):
-            file_path = os.path.join(temp_dir, filename)
-            if os.path.isfile(file_path):
-                if os.path.getmtime(file_path) < cutoff_time:
-                    try:
-                        os.remove(file_path)
-                        cleaned_count += 1
-                    except OSError:
-                        pass  # File might be in use
-    except OSError:
-        pass
-    
-    return cleaned_count
-
-
-def get_file_info(file_path: str) -> Dict[str, Any]:
-    """
-    Get comprehensive file information
-    
-    Args:
-        file_path: Path to the file
-    
-    Returns:
-        Dictionary with file information
-    """
-    if not os.path.exists(file_path):
-        raise ValidationError(f"File not found: {file_path}")
-    
-    stat_info = os.stat(file_path)
-    
-    file_info = {
-        "path": os.path.abspath(file_path),
-        "name": os.path.basename(file_path),
-        "directory": os.path.dirname(file_path),
-        "size": stat_info.st_size,
-        "size_formatted": format_bytes(stat_info.st_size),
-        "created": datetime.fromtimestamp(stat_info.st_ctime).isoformat(),
-        "modified": datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
-        "accessed": datetime.fromtimestamp(stat_info.st_atime).isoformat(),
-        "permissions": oct(stat_info.st_mode)[-3:],
-        "is_file": os.path.isfile(file_path),
-        "is_directory": os.path.isdir(file_path),
-        "is_symlink": os.path.islink(file_path),
-    }
-    
-    # Add file extension and type
-    if os.path.isfile(file_path):
-        file_info["extension"] = os.path.splitext(file_path)[1].lower()
-        
-        # Try to get MIME type
-        try:
-            import magic
-            file_info["mime_type"] = magic.from_file(file_path, mime=True)
-            file_info["file_type"] = magic.from_file(file_path)
-        except ImportError:
-            file_info["mime_type"] = "unknown"
-            file_info["file_type"] = "unknown"
-    
-    # Calculate hashes for files
-    if os.path.isfile(file_path) and stat_info.st_size < 100 * 1024 * 1024:  # < 100MB
-        try:
-            file_info["hashes"] = calculate_multiple_hashes(file_path)
-        except Exception as e:
-            file_info["hash_error"] = str(e)
-    
-    return file_info
-
-
-def monitor_resource_usage(func: Callable) -> Callable:
-    """
-    Decorator to monitor resource usage of functions
-    
-    Args:
-        func: Function to monitor
-    
-    Returns:
-        Decorated function with resource monitoring
-    """
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            import psutil
-            process = psutil.Process()
-            
-            # Get initial resource usage
-            start_time = time.time()
-            start_memory = process.memory_info().rss
-            start_cpu_times = process.cpu_times()
-            
-            # Execute function
-            result = func(*args, **kwargs)
-            
-            # Get final resource usage
-            end_time = time.time()
-            end_memory = process.memory_info().rss
-            end_cpu_times = process.cpu_times()
-            
-            # Calculate usage
-            execution_time = end_time - start_time
-            memory_delta = end_memory - start_memory
-            cpu_time = (end_cpu_times.user - start_cpu_times.user) + \
-                      (end_cpu_times.system - start_cpu_times.system)
-            
-            # Log resource usage
-            logger = logging.getLogger(__name__)
-            logger.info(
-                f"Function {func.__name__} - "
-                f"Time: {format_duration(execution_time)}, "
-                f"Memory: {format_bytes(abs(memory_delta))}, "
-                f"CPU: {cpu_time:.3f}s"
-            )
-            
-            return result
-            
-        except ImportError:
-            # psutil not available, just execute function
-            return func(*args, **kwargs)
-    
-    return wrapper
-
-
-def create_backup(source_path: str, backup_dir: str = "backups") -> str:
-    """
-    Create a backup of a file or directory
-    
-    Args:
-        source_path: Path to backup
-        backup_dir: Directory to store backups
-    
-    Returns:
-        Path to backup file
-    """
-    import shutil
-    
-    if not os.path.exists(source_path):
-        raise ValidationError(f"Source path not found: {source_path}")
-    
-    # Create backup directory
-    os.makedirs(backup_dir, exist_ok=True)
-    
-    # Generate backup filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    source_name = os.path.basename(source_path)
-    backup_name = f"{source_name}_{timestamp}"
-    
-    if os.path.isdir(source_path):
-        backup_name += ".tar.gz"
-        backup_path = os.path.join(backup_dir, backup_name)
-        
-        # Create compressed archive
-        shutil.make_archive(
-            backup_path.replace(".tar.gz", ""),
-            "gztar",
-            source_path
-        )
-    else:
-        backup_path = os.path.join(backup_dir, backup_name)
-        shutil.copy2(source_path, backup_path)
-    
-    return backup_path
-
-
-def verify_integrity(file_path: str, expected_hash: str, algorithm: str = "sha256") -> bool:
-    """
-    Verify file integrity using hash comparison
-    
-    Args:
-        file_path: Path to file
-        expected_hash: Expected hash value
-        algorithm: Hash algorithm to use
-    
-    Returns:
-        True if integrity verified, False otherwise
-    """
-    try:
-        actual_hash = calculate_file_hash(file_path, algorithm)
-        return actual_hash.lower() == expected_hash.lower()
-    except Exception:
-        return False
-
+    return hashes
 
 def sanitize_filename(filename: str) -> str:
-    """
-    Sanitize filename for safe filesystem operations
-    
-    Args:
-        filename: Original filename
-    
-    Returns:
-        Sanitized filename
-    """
-    import re
-    
-    # Remove or replace dangerous characters
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
-    
-    # Remove control characters
-    sanitized = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', sanitized)
-    
-    # Limit length
-    if len(sanitized) > 255:
-        name, ext = os.path.splitext(sanitized)
-        sanitized = name[:255-len(ext)] + ext
-    
-    # Ensure it's not empty
-    if not sanitized or sanitized.isspace():
-        sanitized = "unnamed_file"
-    
-    return sanitized
-
-
-def is_safe_path(path: str, base_path: str = ".") -> bool:
-    """
-    Check if a path is safe (no directory traversal)
-    
-    Args:
-        path: Path to check
-        base_path: Base path to restrict to
-    
-    Returns:
-        True if path is safe, False otherwise
-    """
+    """Sanitize filename for cross-platform compatibility"""
     try:
-        # Resolve both paths
-        resolved_path = os.path.realpath(path)
-        resolved_base = os.path.realpath(base_path)
+        # Remove or replace invalid characters
+        invalid_chars = '<>:"/\\|?*'
+        for char in invalid_chars:
+            filename = filename.replace(char, '_')
         
-        # Check if resolved path starts with base path
-        return resolved_path.startswith(resolved_base)
+        # Remove control characters
+        filename = ''.join(char for char in filename if ord(char) >= 32)
+        
+        # Limit length
+        if len(filename) > 255:
+            name, ext = os.path.splitext(filename)
+            filename = name[:255-len(ext)] + ext
+        
+        # Handle reserved names on Windows
+        if PLATFORM == 'windows':
+            reserved_names = {
+                'CON', 'PRN', 'AUX', 'NUL',
+                'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+                'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+            }
+            
+            name_without_ext = os.path.splitext(filename)[0].upper()
+            if name_without_ext in reserved_names:
+                filename = f"_{filename}"
+        
+        return filename
+        
+    except Exception as e:
+        logger = SecureLogger("FileSanitize")
+        logger.error(f"Error sanitizing filename {filename}: {e}")
+        return f"sanitized_{int(time.time())}"
+
+def create_secure_temp_file(suffix: str = '', prefix: str = 'antivirus_', 
+                           directory: Optional[str] = None) -> str:
+    """Create a secure temporary file"""
+    try:
+        fd, temp_path = tempfile.mkstemp(
+            suffix=suffix,
+            prefix=prefix,
+            dir=directory
+        )
+        
+        # Close the file descriptor but keep the file
+        os.close(fd)
+        
+        # Set secure permissions
+        if hasattr(os, 'chmod'):
+            os.chmod(temp_path, 0o600)
+        
+        return temp_path
+        
+    except Exception as e:
+        logger = SecureLogger("TempFile")
+        logger.error(f"Error creating secure temp file: {e}")
+        raise
+
+def create_secure_temp_dir(suffix: str = '', prefix: str = 'antivirus_',
+                          directory: Optional[str] = None) -> str:
+    """Create a secure temporary directory"""
+    try:
+        temp_dir = tempfile.mkdtemp(
+            suffix=suffix,
+            prefix=prefix,
+            dir=directory
+        )
+        
+        # Set secure permissions
+        if hasattr(os, 'chmod'):
+            os.chmod(temp_dir, 0o700)
+        
+        return temp_dir
+        
+    except Exception as e:
+        logger = SecureLogger("TempDir")
+        logger.error(f"Error creating secure temp directory: {e}")
+        raise
+
+def safe_file_operation(operation: str, source: str, destination: str = None) -> bool:
+    """Perform safe file operations with error handling"""
+    try:
+        source_path = Path(source)
+        
+        if operation == 'copy':
+            if not destination:
+                raise ValueError("Destination required for copy operation")
+            shutil.copy2(source, destination)
+            
+        elif operation == 'move':
+            if not destination:
+                raise ValueError("Destination required for move operation")
+            shutil.move(source, destination)
+            
+        elif operation == 'delete':
+            if source_path.is_file():
+                source_path.unlink()
+            elif source_path.is_dir():
+                shutil.rmtree(source)
+            
+        elif operation == 'backup':
+            if not destination:
+                destination = f"{source}.backup_{int(time.time())}"
+            shutil.copy2(source, destination)
+            
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+        
+        return True
+        
+    except Exception as e:
+        logger = SecureLogger("FileOp")
+        logger.error(f"Error in {operation} operation from {source} to {destination}: {e}")
+        return False
+
+def get_file_info(file_path: str) -> Dict[str, Any]:
+    """Get comprehensive file information"""
+    try:
+        file_path = Path(file_path)
+        
+        if not file_path.exists():
+            return {'error': 'File not found'}
+        
+        stat_info = file_path.stat()
+        
+        info = {
+            'path': str(file_path.absolute()),
+            'name': file_path.name,
+            'stem': file_path.stem,
+            'suffix': file_path.suffix,
+            'size': stat_info.st_size,
+            'size_human': format_file_size(stat_info.st_size),
+            'created': datetime.fromtimestamp(stat_info.st_ctime).isoformat(),
+            'modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
+            'accessed': datetime.fromtimestamp(stat_info.st_atime).isoformat(),
+            'permissions': oct(stat_info.st_mode)[-3:],
+            'is_file': file_path.is_file(),
+            'is_dir': file_path.is_dir(),
+            'is_symlink': file_path.is_symlink()
+        }
+        
+        # Add file type detection if magic is available
+        if HAS_MAGIC and file_path.is_file():
+            try:
+                info['mime_type'] = magic.from_file(str(file_path), mime=True)
+                info['file_type'] = magic.from_file(str(file_path))
+            except Exception as e:
+                logger = SecureLogger("FileInfo")
+                logger.debug(f"Magic detection failed: {e}")
+        
+        # Add hash information
+        if file_path.is_file() and stat_info.st_size < 100 * 1024 * 1024:  # < 100MB
+            info['hashes'] = calculate_multiple_hashes(str(file_path))
+        
+        return info
+        
+    except Exception as e:
+        logger = SecureLogger("FileInfo")
+        logger.error(f"Error getting file info for {file_path}: {e}")
+        return {'error': str(e)}
+
+def format_file_size(size_bytes: int) -> str:
+    """Format file size in human-readable format"""
+    try:
+        if size_bytes == 0:
+            return "0 B"
+        
+        size_names = ["B", "KB", "MB", "GB", "TB", "PB"]
+        i = 0
+        
+        while size_bytes >= 1024 and i < len(size_names) - 1:
+            size_bytes /= 1024.0
+            i += 1
+        
+        return f"{size_bytes:.1f} {size_names[i]}"
+        
+    except Exception:
+        return f"{size_bytes} B"
+
+def validate_file_path(file_path: str, check_exists: bool = True, 
+                      check_readable: bool = True) -> Tuple[bool, str]:
+    """Validate file path with comprehensive checks"""
+    try:
+        path = Path(file_path)
+        
+        # Check for path traversal
+        try:
+            path.resolve().relative_to(Path.cwd().resolve())
+        except ValueError:
+            # Path is outside current directory, check if it's absolute and safe
+            if not path.is_absolute():
+                return False, "Relative path traversal detected"
+        
+        # Check if path exists
+        if check_exists and not path.exists():
+            return False, "Path does not exist"
+        
+        # Check if readable
+        if check_readable and path.exists():
+            if not os.access(path, os.R_OK):
+                return False, "Path is not readable"
+        
+        # Check for suspicious patterns
+        suspicious_patterns = [
+            r'\.\.[\\/]',  # Path traversal
+            r'[<>:"|?*]',  # Invalid characters
+            r'^\s*$',      # Empty or whitespace only
+        ]
+        
+        path_str = str(path)
+        for pattern in suspicious_patterns:
+            if re.search(pattern, path_str):
+                return False, f"Suspicious pattern detected: {pattern}"
+        
+        return True, "Valid path"
+        
+    except Exception as e:
+        return False, f"Path validation error: {e}"
+
+def run_command(command: List[str], timeout: int = 30, 
+               capture_output: bool = True) -> Dict[str, Any]:
+    """Run system command safely with timeout"""
+    try:
+        logger = SecureLogger("Command")
+        logger.info(f"Running command: {' '.join(command)}")
+        
+        result = subprocess.run(
+            command,
+            timeout=timeout,
+            capture_output=capture_output,
+            text=True,
+            check=False
+        )
+        
+        return {
+            'returncode': result.returncode,
+            'stdout': result.stdout if capture_output else '',
+            'stderr': result.stderr if capture_output else '',
+            'success': result.returncode == 0
+        }
+        
+    except subprocess.TimeoutExpired:
+        logger.error(f"Command timed out after {timeout} seconds")
+        return {
+            'returncode': -1,
+            'stdout': '',
+            'stderr': f'Command timed out after {timeout} seconds',
+            'success': False
+        }
+    except Exception as e:
+        logger.error(f"Command execution failed: {e}")
+        return {
+            'returncode': -1,
+            'stdout': '',
+            'stderr': str(e),
+            'success': False
+        }
+
+def check_admin_privileges() -> bool:
+    """Check if running with administrator/root privileges"""
+    try:
+        if PLATFORM == 'windows':
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        else:
+            return os.geteuid() == 0
     except Exception:
         return False
 
-
-# Performance monitoring utilities
-class PerformanceTimer:
-    """Context manager for timing operations"""
-    
-    def __init__(self, operation_name: str = "Operation"):
-        self.operation_name = operation_name
-        self.start_time = None
-        self.end_time = None
-    
-    def __enter__(self):
-        self.start_time = time.time()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.end_time = time.time()
-        duration = self.end_time - self.start_time
+def ensure_directory_exists(directory: str, mode: int = 0o755) -> bool:
+    """Ensure directory exists with proper permissions"""
+    try:
+        path = Path(directory)
+        path.mkdir(parents=True, exist_ok=True)
         
-        logger = logging.getLogger(__name__)
-        logger.info(f"{self.operation_name} completed in {format_duration(duration)}")
-    
-    @property
-    def duration(self) -> Optional[float]:
-        """Get operation duration in seconds"""
-        if self.start_time and self.end_time:
-            return self.end_time - self.start_time
-        return None
-
-
-class ResourceMonitor:
-    """Monitor system resource usage"""
-    
-    def __init__(self):
-        self.start_stats = None
-        self.end_stats = None
-    
-    def start(self):
-        """Start monitoring"""
-        try:
-            import psutil
-            self.start_stats = {
-                "memory": psutil.virtual_memory(),
-                "cpu_percent": psutil.cpu_percent(),
-                "disk_io": psutil.disk_io_counters(),
-                "network_io": psutil.net_io_counters(),
-                "timestamp": time.time()
-            }
-        except ImportError:
-            self.start_stats = {"timestamp": time.time()}
-    
-    def stop(self) -> Dict[str, Any]:
-        """Stop monitoring and return statistics"""
-        try:
-            import psutil
-            self.end_stats = {
-                "memory": psutil.virtual_memory(),
-                "cpu_percent": psutil.cpu_percent(),
-                "disk_io": psutil.disk_io_counters(),
-                "network_io": psutil.net_io_counters(),
-                "timestamp": time.time()
-            }
-            
-            if self.start_stats:
-                return self._calculate_deltas()
-            else:
-                return self.end_stats
-                
-        except ImportError:
-            return {"error": "psutil not available"}
-    
-    def _calculate_deltas(self) -> Dict[str, Any]:
-        """Calculate resource usage deltas"""
-        duration = self.end_stats["timestamp"] - self.start_stats["timestamp"]
+        # Set permissions on Unix-like systems
+        if hasattr(os, 'chmod') and PLATFORM != 'windows':
+            os.chmod(path, mode)
         
-        deltas = {
-            "duration": duration,
-            "memory_change": self.end_stats["memory"].used - self.start_stats["memory"].used,
-            "cpu_average": (self.start_stats["cpu_percent"] + self.end_stats["cpu_percent"]) / 2
+        return True
+        
+    except Exception as e:
+        logger = SecureLogger("DirCreate")
+        logger.error(f"Error creating directory {directory}: {e}")
+        return False
+
+def cleanup_temp_files(pattern: str = 'antivirus_*', max_age_hours: int = 24) -> int:
+    """Clean up old temporary files"""
+    try:
+        temp_dir = Path(tempfile.gettempdir())
+        current_time = time.time()
+        max_age_seconds = max_age_hours * 3600
+        cleaned_count = 0
+        
+        for temp_file in temp_dir.glob(pattern):
+            try:
+                file_age = current_time - temp_file.stat().st_mtime
+                if file_age > max_age_seconds:
+                    if temp_file.is_file():
+                        temp_file.unlink()
+                    elif temp_file.is_dir():
+                        shutil.rmtree(temp_file)
+                    cleaned_count += 1
+            except Exception as e:
+                logger = SecureLogger("TempCleanup")
+                logger.debug(f"Error cleaning temp file {temp_file}: {e}")
+        
+        return cleaned_count
+        
+    except Exception as e:
+        logger = SecureLogger("TempCleanup")
+        logger.error(f"Error during temp cleanup: {e}")
+        return 0
+
+def get_available_disk_space(path: str = '.') -> Dict[str, int]:
+    """Get available disk space information"""
+    try:
+        if HAS_PSUTIL:
+            usage = psutil.disk_usage(path)
+            return {
+                'total': usage.total,
+                'used': usage.used,
+                'free': usage.free,
+                'percent': (usage.used / usage.total) * 100
+            }
+        else:
+            # Fallback using shutil
+            total, used, free = shutil.disk_usage(path)
+            return {
+                'total': total,
+                'used': used,
+                'free': free,
+                'percent': (used / total) * 100
+            }
+    except Exception as e:
+        logger = SecureLogger("DiskSpace")
+        logger.error(f"Error getting disk space for {path}: {e}")
+        return {'total': 0, 'used': 0, 'free': 0, 'percent': 0}
+
+def is_network_available() -> bool:
+    """Check if network connectivity is available"""
+    try:
+        import socket
+        
+        # Try to connect to a reliable DNS server
+        with socket.create_connection(("8.8.8.8", 53), timeout=3):
+            return True
+    except Exception:
+        return False
+
+def get_process_info(pid: Optional[int] = None) -> Dict[str, Any]:
+    """Get process information"""
+    try:
+        if not HAS_PSUTIL:
+            return {'error': 'psutil not available'}
+        
+        if pid is None:
+            pid = os.getpid()
+        
+        process = psutil.Process(pid)
+        
+        return {
+            'pid': process.pid,
+            'name': process.name(),
+            'exe': process.exe(),
+            'cmdline': process.cmdline(),
+            'status': process.status(),
+            'create_time': process.create_time(),
+            'cpu_percent': process.cpu_percent(),
+            'memory_info': process.memory_info()._asdict(),
+            'num_threads': process.num_threads(),
+            'username': process.username()
         }
         
-        # Calculate I/O deltas if available
-        if self.start_stats.get("disk_io") and self.end_stats.get("disk_io"):
-            deltas["disk_read"] = self.end_stats["disk_io"].read_bytes - self.start_stats["disk_io"].read_bytes
-            deltas["disk_write"] = self.end_stats["disk_io"].write_bytes - self.start_stats["disk_io"].write_bytes
-        
-        if self.start_stats.get("network_io") and self.end_stats.get("network_io"):
-            deltas["network_sent"] = self.end_stats["network_io"].bytes_sent - self.start_stats["network_io"].bytes_sent
-            deltas["network_recv"] = self.end_stats["network_io"].bytes_recv - self.start_stats["network_io"].bytes_recv
-        
-        return deltas
+    except Exception as e:
+        logger = SecureLogger("ProcessInfo")
+        logger.error(f"Error getting process info for PID {pid}: {e}")
+        return {'error': str(e)}
 
+def generate_unique_id(prefix: str = '', length: int = 16) -> str:
+    """Generate a unique identifier"""
+    try:
+        import secrets
+        import string
+        
+        alphabet = string.ascii_letters + string.digits
+        unique_part = ''.join(secrets.choice(alphabet) for _ in range(length))
+        
+        if prefix:
+            return f"{prefix}_{unique_part}"
+        return unique_part
+        
+    except Exception:
+        # Fallback to timestamp-based ID
+        import random
+        timestamp = str(int(time.time()))
+        random_part = str(random.randint(1000, 9999))
+        
+        if prefix:
+            return f"{prefix}_{timestamp}_{random_part}"
+        return f"{timestamp}_{random_part}"
+
+def validate_json_data(data: str) -> Tuple[bool, Union[Dict, List, str]]:
+    """Validate and parse JSON data"""
+    try:
+        parsed_data = json.loads(data)
+        return True, parsed_data
+    except json.JSONDecodeError as e:
+        return False, f"Invalid JSON: {e}"
+    except Exception as e:
+        return False, f"JSON validation error: {e}"
+
+def safe_json_dump(data: Any, file_path: str, indent: int = 2) -> bool:
+    """Safely dump data to JSON file"""
+    try:
+        temp_file = create_secure_temp_file(suffix='.json')
+        
+        with open(temp_file, 'w') as f:
+            json.dump(data, f, indent=indent, default=str)
+        
+        # Atomic move to final location
+        shutil.move(temp_file, file_path)
+        return True
+        
+    except Exception as e:
+        logger = SecureLogger("JSONDump")
+        logger.error(f"Error dumping JSON to {file_path}: {e}")
+        return False
+
+def benchmark_function(func, *args, **kwargs) -> Dict[str, Any]:
+    """Benchmark function execution time"""
+    try:
+        start_time = time.perf_counter()
+        start_memory = 0
+        
+        if HAS_PSUTIL:
+            process = psutil.Process()
+            start_memory = process.memory_info().rss
+        
+        result = func(*args, **kwargs)
+        
+        end_time = time.perf_counter()
+        end_memory = 0
+        
+        if HAS_PSUTIL:
+            end_memory = process.memory_info().rss
+        
+        return {
+            'result': result,
+            'execution_time': end_time - start_time,
+            'memory_delta': end_memory - start_memory if HAS_PSUTIL else 0,
+            'success': True
+        }
+        
+    except Exception as e:
+        return {
+            'result': None,
+            'execution_time': 0,
+            'memory_delta': 0,
+            'success': False,
+            'error': str(e)
+        }
+
+# Utility constants
+COMMON_EXECUTABLE_EXTENSIONS = {
+    '.exe', '.com', '.scr', '.bat', '.cmd', '.pif', '.app', '.deb', 
+    '.rpm', '.dmg', '.pkg', '.msi', '.jar', '.vbs', '.js', '.ps1'
+}
+
+COMMON_ARCHIVE_EXTENSIONS = {
+    '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.cab', 
+    '.iso', '.img', '.dmg'
+}
+
+COMMON_DOCUMENT_EXTENSIONS = {
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', 
+    '.odt', '.ods', '.odp', '.rtf', '.txt'
+}
+
+def get_file_category(file_path: str) -> str:
+    """Categorize file based on extension"""
+    try:
+        extension = Path(file_path).suffix.lower()
+        
+        if extension in COMMON_EXECUTABLE_EXTENSIONS:
+            return 'executable'
+        elif extension in COMMON_ARCHIVE_EXTENSIONS:
+            return 'archive'
+        elif extension in COMMON_DOCUMENT_EXTENSIONS:
+            return 'document'
+        elif extension.startswith('.'):
+            return 'other'
+        else:
+            return 'unknown'
+            
+    except Exception:
+        return 'unknown'
 
 # Export all utility functions
 __all__ = [
-    "initialize",
-    "get_version_info", 
-    "get_system_info",
-    "check_dependencies",
-    "calculate_file_hash",
-    "calculate_multiple_hashes",
-    "validate_file_path",
-    "safe_file_operation",
-    "format_bytes",
-    "format_duration",
-    "retry_operation",
-    "timeout_operation",
-    "validate_config_value",
-    "create_secure_temp_file",
-    "cleanup_temp_files",
-    "get_file_info",
-    "monitor_resource_usage",
-    "create_backup",
-    "verify_integrity",
-    "sanitize_filename",
-    "is_safe_path",
-    "PerformanceTimer",
-    "ResourceMonitor"
+    'get_system_info', 'calculate_file_hash', 'calculate_multiple_hashes',
+    'sanitize_filename', 'create_secure_temp_file', 'create_secure_temp_dir',
+    'safe_file_operation', 'get_file_info', 'format_file_size',
+    'validate_file_path', 'run_command', 'check_admin_privileges',
+    'ensure_directory_exists', 'cleanup_temp_files', 'get_available_disk_space',
+    'is_network_available', 'get_process_info', 'generate_unique_id',
+    'validate_json_data', 'safe_json_dump', 'benchmark_function',
+    'get_file_category', 'COMMON_EXECUTABLE_EXTENSIONS', 'COMMON_ARCHIVE_EXTENSIONS',
+    'COMMON_DOCUMENT_EXTENSIONS'
 ]

@@ -1,0 +1,40 @@
+# Prashant918 Advanced Antivirus - Project Overview
+
+## Version 1.0.2 - Enterprise Cybersecurity Solution
+
+### Project Structure
+This document provides an overview of the Prashant918 Advanced Antivirus project structure and components.
+
+### Core Features
+- AI/ML-powered threat detection
+- Real-time system monitoring
+- Advanced memory scanning
+- Network security analysis
+- Behavioral pattern recognition
+- Cloud threat intelligence
+- Cross-platform compatibility
+
+### Technology Stack
+- Python 3.8+
+- TensorFlow & Scikit-learn
+- YARA pattern matching
+- Oracle & SQLite databases
+- Flask web framework
+- Tkinter GUI
+- Advanced cryptography
+
+### Installation
+Please refer to the INSTALLATION_GUIDE.md for detailed setup instructions.
+
+### Security Notice
+This system implements advanced security measures including:
+- Multi-layer encryption
+- Anti-tampering protection
+- Secure API authentication
+- Real-time threat monitoring
+
+### Support
+For technical support and documentation, visit the project repository or contact the development team.
+
+---
+© 2024 Prashant918 Security Solutions. All rights reserved.

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prashant918 Advanced Antivirus - AI-Powered Cybersecurity</title>
+    <link rel="stylesheet" href="assets/css/main.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loadingScreen" class="loading-screen">
+        <div class="loading-content">
+            <div class="loading-logo">
+                <i class="fas fa-shield-virus"></i>
+            </div>
+            <div class="loading-text">Initializing Prashant918 AI Security</div>
+            <div class="loading-bar">
+                <div class="loading-progress"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <i class="fas fa-shield-virus"></i>
+                <span>Prashant918 AI</span>
+            </div>
+            <div class="nav-menu" id="navMenu">
+                <a href="#home" class="nav-link active">Home</a>
+                <a href="#features" class="nav-link">Features</a>
+                <a href="#architecture" class="nav-link">Architecture</a>
+                <a href="#components" class="nav-link">Components</a>
+                <a href="#api" class="nav-link">API</a>
+                <a href="#documentation" class="nav-link">Docs</a>
+                <a href="#admin" class="nav-link admin-link">Admin</a>
+            </div>
+            <div class="nav-toggle" id="navToggle">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section id="home" class="hero">
+        <div class="hero-background">
+            <div class="cyber-grid"></div>
+            <div class="floating-particles"></div>
+        </div>
+        <div class="hero-content">
+            <div class="hero-text">
+                <h1 class="hero-title">
+                    <span class="gradient-text">Prashant918</span>
+                    <span class="hero-subtitle">Advanced AI Antivirus</span>
+                </h1>
+                <p class="hero-description">
+                    Enterprise-grade cybersecurity solution powered by artificial intelligence, 
+                    machine learning, and behavioral analysis for comprehensive threat detection.
+                </p>
+                <div class="hero-stats">
+                    <div class="stat-item">
+                        <span class="stat-number" data-target="99.9">0</span>
+                        <span class="stat-label">Detection Rate</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-number" data-target="25">0</span>
+                        <span class="stat-label">+ Components</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-number" data-target="24">0</span>
+                        <span class="stat-label">7 Protection</span>
+                    </div>
+                </div>
+                <div class="hero-buttons">
+                    <button class="btn btn-primary" onclick="scrollToSection('features')">
+                        <i class="fas fa-rocket"></i>
+                        Explore Features
+                    </button>
+                    <button class="btn btn-secondary" onclick="openLiveDemo()">
+                        <i class="fas fa-play"></i>
+                        Live Demo
+                    </button>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="security-dashboard">
+                    <div class="dashboard-header">
+                        <div class="status-indicator active"></div>
+                        <span>Real-time Protection Active</span>
+                    </div>
+                    <div class="threat-monitor">
+                        <div class="threat-item">
+                            <i class="fas fa-virus"></i>
+                            <span>Malware Blocked: <strong>1,247</strong></span>
+                        </div>
+                        <div class="threat-item">
+                            <i class="fas fa-shield-alt"></i>
+                            <span>Files Scanned: <strong>45,892</strong></span>
+                        </div>
+                        <div class="threat-item">
+                            <i class="fas fa-network-wired"></i>
+                            <span>Network Monitored: <strong>Active</strong></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Admin Section -->
+    <section id="admin" class="admin-section" style="display: none;">
+        <div class="container">
+            <div class="admin-login" id="adminLogin">
+                <div class="login-form">
+                    <h2>Admin Access</h2>
+                    <p>Enter API key to access admin panel</p>
+                    <form id="adminLoginForm">
+                        <div class="form-group">
+                            <input type="password" id="apiKey" placeholder="API Key" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Access Admin Panel</button>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="admin-panel" id="adminPanel" style="display: none;">
+                <div class="admin-header">
+                    <h2>Admin Dashboard</h2>
+                    <button class="btn btn-secondary" onclick="logout()">Logout</button>
+                </div>
+                
+                <div class="admin-tabs">
+                    <div class="tab-nav">
+                        <button class="tab-btn active" data-tab="overview">Overview</button>
+                        <button class="tab-btn" data-tab="debug">Debug Console</button>
+                        <button class="tab-btn" data-tab="logs">System Logs</button>
+                        <button class="tab-btn" data-tab="config">Configuration</button>
+                    </div>
+                    
+                    <div class="tab-content">
+                        <div class="tab-pane active" id="overview">
+                            <div class="admin-stats">
+                                <div class="stat-card">
+                                    <h3>System Status</h3>
+                                    <div class="status-indicator active"></div>
+                                    <span>Online</span>
+                                </div>
+                                <div class="stat-card">
+                                    <h3>Active Threats</h3>
+                                    <div class="stat-number">0</div>
+                                </div>
+                                <div class="stat-card">
+                                    <h3>Files Scanned</h3>
+                                    <div class="stat-number">1,247</div>
+                                </div>
+                                <div class="stat-card">
+                                    <h3>Quarantined</h3>
+                                    <div class="stat-number">23</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="tab-pane" id="debug">
+                            <div class="debug-console">
+                                <div class="console-header">
+                                    <h3>Debug Console</h3>
+                                    <button class="btn btn-small" onclick="clearConsole()">Clear</button>
+                                </div>
+                                <div class="console-output" id="consoleOutput">
+                                    <div class="console-line">[INFO] Debug console initialized</div>
+                                    <div class="console-line">[INFO] System monitoring active</div>
+                                </div>
+                                <div class="console-input">
+                                    <input type="text" id="debugCommand" placeholder="Enter debug command...">
+                                    <button onclick="executeDebugCommand()">Execute</button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="tab-pane" id="logs">
+                            <div class="logs-viewer">
+                                <div class="logs-header">
+                                    <h3>System Logs</h3>
+                                    <select id="logLevel">
+                                        <option value="all">All Levels</option>
+                                        <option value="error">Error</option>
+                                        <option value="warning">Warning</option>
+                                        <option value="info">Info</option>
+                                        <option value="debug">Debug</option>
+                                    </select>
+                                </div>
+                                <div class="logs-content" id="logsContent">
+                                    <!-- Logs will be populated here -->
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="tab-pane" id="config">
+                            <div class="config-editor">
+                                <h3>System Configuration</h3>
+                                <div class="config-section">
+                                    <h4>Detection Settings</h4>
+                                    <div class="config-item">
+                                        <label>ML Threshold:</label>
+                                        <input type="range" min="0" max="1" step="0.01" value="0.85">
+                                        <span>0.85</span>
+                                    </div>
+                                    <div class="config-item">
+                                        <label>Real-time Monitoring:</label>
+                                        <input type="checkbox" checked>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h3>Prashant918 AI Antivirus</h3>
+                    <p>Advanced AI-powered cybersecurity solution for enterprise protection.</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Contact</h4>
+                    <ul>
+                        <li><a href="mailto:prashant918@example.com">prashant918@example.com</a></li>
+                        <li><a href="#">GitHub Issues</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 Prashant918. All rights reserved. | Version 1.0.2</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="assets/js/main.js"></script>
+    <script src="assets/js/security.js"></script>
+    <script src="assets/js/api.js"></script>
+</body>
+</html>

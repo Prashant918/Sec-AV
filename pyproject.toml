@@ -1,242 +1,86 @@
 [build-system]
-requires = [
-    "setuptools>=68.0.0",
-    "wheel>=0.41.0",
-    "Cython>=3.0.0",
-    "numpy>=1.24.0",
-    "pybind11>=2.11.0"
-]
+requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "prashant918-advanced-antivirus"
-version = "2.0.0"
-description = "Advanced Enterprise Cybersecurity and Threat Detection System"
+version = "1.0.2"
+description = "Advanced AI-powered antivirus system with behavioral analysis and cloud intelligence"
 readme = "README.md"
-license = {text = "Proprietary"}
-authors = [
-    {name = "Prashant918 Security Team", email = "security@prashant918.com"}
-]
-maintainers = [
-    {name = "Prashant918 Security Team", email = "security@prashant918.com"}
-]
-keywords = [
-    "antivirus", "cybersecurity", "malware", "threat-detection",
-    "security", "virus-scanner", "enterprise-security", "ai-security",
-    "machine-learning", "behavioral-analysis", "yara", "oracle"
-]
+license = { text = "MIT" }
+authors = [{ name = "Prashant918", email = "prashant918@example.com" }]
+requires-python = ">=3.8"
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: System Administrators",
     "Intended Audience :: Information Technology",
-    "Topic :: Security",
-    "Topic :: System :: Monitoring",
-    "License :: Other/Proprietary License",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Operating System :: OS Independent"
+    "Topic :: Security",
+    "Topic :: System :: Monitoring",
+    "Topic :: Utilities",
 ]
-requires-python = ">=3.9"
+
 dependencies = [
-    # Database and ORM
-    "cx_Oracle>=8.3.0",
-    "oracledb>=1.4.2",
-    "sqlalchemy>=2.0.0",
-    "alembic>=1.12.0",
-    
-    # Security and Cryptography
-    "cryptography>=41.0.0",
-    "bcrypt>=4.0.1",
-    "passlib>=1.7.4",
-    
-    # HTTP and Networking
-    "requests>=2.31.0",
-    "certifi>=2023.7.22",
-    "urllib3>=2.0.4",
-    
-    # System Monitoring
-    "psutil>=5.9.0",
-    
-    # Machine Learning
-    "numpy>=1.24.0",
-    "pandas>=2.0.0",
-    "scikit-learn>=1.3.0",
-    "tensorflow>=2.13.0",
-    "joblib>=1.3.0",
-    
-    # Security Analysis
-    "yara-python>=4.3.1",
-    "python-magic>=0.4.27",
-    "pefile>=2023.2.7",
-    
-    # Utilities
-    "python-dateutil>=2.8.2",
-    "pytz>=2023.3",
-    "termcolor>=2.3.0",
-    "pyfiglet>=0.8.0",
-    "rich>=13.5.2",
-    "click>=8.1.7"
+    "psutil>=5.8.0,<6.0.0",
+    "requests>=2.25.0,<3.0.0",
+    "cryptography>=40.0.0,<43.0.0",
+    "Pillow>=10.0.0,<11.0.0",
+    "Flask>=3.0.0,<4.0.0",
+    "Flask-CORS>=4.0.0,<5.0.0",
+    "Werkzeug>=3.0.0,<4.0.0",
+    "watchdog>=3.0.0,<5.0.0",
+    "PyYAML>=6.0.0,<7.0.0",
+    "jsonschema>=4.0.0,<5.0.0",
+    "colorlog>=6.0.0,<8.0.0",
+    "aiofiles>=0.8.0,<1.0.0",
+    "aiohttp>=3.8.0,<4.0.0",
+    "dnspython>=2.2.0,<3.0.0",
+    "urllib3>=2.0.0,<3.0.0",
+    "pyfiglet",
+    "termcolor",
+    "click",
+    "rich",
+    "packaging",
 ]
 
 [project.optional-dependencies]
-advanced_ml = [
-    "torch>=2.0.0",
-    "transformers>=4.33.2",
-    "xgboost>=1.7.0"
+ml = [
+    "numpy>=1.21.0,<2.0.0",
+    "scikit-learn>=1.3.0,<1.5.0",
+    "pandas>=2.0.0,<2.3.0",
 ]
-cloud = [
-    "boto3>=1.28.57",
-    "azure-storage-blob>=12.17.0",
-    "google-cloud-storage>=2.10.0"
+advanced = [
+    "scapy>=2.4.5,<3.0.0",
+    "yara-python>=4.2.0,<5.0.0",
 ]
-monitoring = [
-    "prometheus-client>=0.17.1",
-    "datadog>=0.47.0"
-]
-web = [
-    "flask>=2.3.3",
-    "fastapi>=0.103.0",
-    "uvicorn>=0.23.2"
+oracle = [
+    "cx_Oracle>=8.0.0,<9.0.0",
 ]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "black>=23.7.0",
-    "flake8>=6.0.0",
-    "mypy>=1.5.0",
-    "pre-commit>=3.4.0"
+    "pytest>=7.0.0,<9.0.0",
+    "black>=23.0.0,<25.0.0",
+    "flake8>=6.0.0,<8.0.0",
+    "mypy>=1.0.0,<2.0.0",
 ]
 all = [
-    "torch>=2.0.0",
-    "boto3>=1.28.57",
-    "prometheus-client>=0.17.1",
-    "flask>=2.3.3",
-    "pytest>=7.4.0"
+    "prashant918-advanced-antivirus[ml,advanced,oracle,dev]"
 ]
+
+[project.scripts]
+prashant918-antivirus = "prashant918_antivirus.cli:main"
+p918av = "prashant918_antivirus.cli:main"
+prashant918-av-gui = "prashant918_antivirus.gui.main_window:main"
+prashant918-av-service = "prashant918_antivirus.service.service_manager:main"
 
 [project.urls]
 Homepage = "https://github.com/prashant918/advanced-antivirus"
-Documentation = "https://docs.prashant918.com/antivirus"
 Repository = "https://github.com/prashant918/advanced-antivirus"
-"Bug Tracker" = "https://github.com/prashant918/advanced-antivirus/issues"
-Changelog = "https://github.com/prashant918/advanced-antivirus/blob/main/CHANGELOG.md"
-
-[project.scripts]
-prashant918-av = "prashant918_antivirus.cli:main"
-prashant918-scan = "prashant918_antivirus.scanner:main"
-prashant918-update = "prashant918_antivirus.updater:main"
-prashant918-config = "prashant918_antivirus.config_manager:main"
-
-[project.gui-scripts]
-prashant918-av-gui = "prashant918_antivirus.gui:main"
-
-[tool.setuptools]
-zip-safe = false
-include-package-data = true
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["prashant918_antivirus*"]
-exclude = ["tests*"]
-
-[tool.setuptools.package-data]
-prashant918_antivirus = [
-    "data/*.json",
-    "data/*.yaml",
-    "data/yara_rules/*.yar",
-    "config/*.conf",
-    "templates/*.html",
-    "static/css/*.css",
-    "static/js/*.js"
-]
-
-[tool.black]
-line-length = 88
-target-version = ['py39']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 88
-known_first_party = ["prashant918_antivirus"]
-
-[tool.mypy]
-python_version = "3.9"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
-
-[tool.pytest.ini_options]
-minversion = "7.0"
-addopts = "-ra -q --strict-markers --strict-config"
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
-    "security: marks tests as security tests"
-]
-
-[tool.coverage.run]
-source = ["src/prashant918_antivirus"]
-omit = [
-    "*/tests/*",
-    "*/test_*",
-    "setup.py"
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:"
-]
-
-[tool.bandit]
-exclude_dirs = ["tests", "build", "dist"]
-skips = ["B101", "B601"]
-
-[tool.flake8]
-max-line-length = 88
-extend-ignore = ["E203", "W503"]
-exclude = [
-    ".git",
-    "__pycache__",
-    "build",
-    "dist",
-    ".eggs",
-    "*.egg-info",
-    ".venv",
-    ".tox"
-]
+Issues = "https://github.com/prashant918/advanced-antivirus/issues"
+Documentation

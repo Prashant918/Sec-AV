@@ -1,25 +1,41 @@
 """
-Prashant918 Advanced Antivirus - Command Line Interface
-
-Main CLI entry point for the cybersecurity platform providing
-comprehensive command-line tools for threat detection and management.
+Prashant918 Advanced Antivirus - Enhanced CLI
+Cross-platform command-line interface with comprehensive functionality
 """
 
 import os
 import sys
-import argparse
 import json
 import time
-from typing import Dict, Any, List, Optional
+import threading
 from pathlib import Path
+from typing import List, Dict, Any, Optional
+import argparse
 
-# Handle optional dependencies gracefully
+# Core imports with error handling
+try:
+    from .logger import SecureLogger
+except ImportError:
+    import logging
+    SecureLogger = logging.getLogger
+
+try:
+    from .config import secure_config
+except ImportError:
+    secure_config = type('Config', (), {'get': lambda self, key, default=None: default})()
+
+try:
+    from .exceptions import AntivirusError
+except ImportError:
+    class AntivirusError(Exception): pass
+
+# Optional imports for enhanced functionality
 try:
     import click
-    CLICK_AVAILABLE = True
+    HAS_CLICK = True
 except ImportError:
-    CLICK_AVAILABLE = False
-    print("Warning: click not available, using basic argument parsing")
+    HAS_CLICK = False
+    click = None
 
 try:
     from rich.console import Console
@@ -27,241 +43,73 @@ try:
     from rich.progress import Progress, SpinnerColumn, TextColumn
     from rich.panel import Panel
     from rich.text import Text
-    RICH_AVAILABLE = True
+    HAS_RICH = True
     console = Console()
 except ImportError:
-    RICH_AVAILABLE = False
-    print("Warning: rich not available, using basic output")
-    
-    # Create a simple console replacement
-    class SimpleConsole:
-        def print(self, *args, **kwargs):
-            print(*args)
-        
-        def __getattr__(self, name):
-            return lambda *args, **kwargs: None
-    
-    console = SimpleConsole()
+    HAS_RICH = False
+    console = None
 
-# Package imports with error handling
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+    psutil = None
+
+# Package info
 try:
     from . import __version__, __author__
 except ImportError:
-    __version__ = "2.0.0"
-    __author__ = "Prashant918 Security Team"
+    __version__ = "1.0.2"
+    __author__ = "Prashant918"
 
-try:
-    from .utils import (
-        initialize, get_system_info, check_dependencies,
-        format_bytes, format_duration, PerformanceTimer
-    )
-except ImportError:
-    print("Warning: utils module not available")
+class AntivirusCLI:
+    """Enhanced command-line interface for Prashant918 Antivirus"""
     
-    def initialize(*args, **kwargs):
-        return {"status": "error", "message": "Utils not available"}
+    def __init__(self):
+        self.logger = SecureLogger("CLI")
+        self.threat_engine = None
+        self.quarantine_manager = None
+        self.realtime_monitor = None
+        self.service_manager = None
+        
+        # Initialize components
+        self._initialize_components()
     
-    def get_system_info():
-        return {"error": "System info not available"}
+    def _initialize_components(self):
+        """Initialize antivirus components with graceful degradation"""
+        components = [
+            ("threat_engine", "prashant918_antivirus.antivirus.engine", "AdvancedThreatDetectionEngine"),
+            ("quarantine_manager", "prashant918_antivirus.core.quarantine", "QuarantineManager"),
+            ("realtime_monitor", "prashant918_antivirus.core.realtime_monitor", "RealtimeMonitor"),
+            ("service_manager", "prashant918_antivirus.service.service_manager", "ServiceManager"),
+        ]
+        
+        for attr_name, module_path, class_name in components:
+            try:
+                module = __import__(module_path, fromlist=[class_name])
+                if hasattr(module, class_name):
+                    component_class = getattr(module, class_name)
+                    if attr_name == "realtime_monitor":
+                        # RealtimeMonitor needs threat_engine and quarantine_manager
+                        setattr(self, attr_name, component_class(
+                            threat_engine=self.threat_engine,
+                            quarantine_manager=self.quarantine_manager
+                        ))
+                    else:
+                        setattr(self, attr_name, component_class())
+                    self.logger.info(f"Loaded {attr_name} successfully")
+                else:
+                    self.logger.warning(f"Component {class_name} not found in {module_path}")
+            except ImportError as e:
+                self.logger.warning(f"Could not load {attr_name}: {e}")
+            except Exception as e:
+                self.logger.error(f"Error initializing {attr_name}: {e}")
     
-    def check_dependencies():
-        return {"status": "error", "message": "Dependency check not available"}
-    
-    def format_bytes(size):
-        return f"{size} bytes"
-    
-    def format_duration(seconds):
-        return f"{seconds:.2f}s"
-    
-    class PerformanceTimer:
-        def __init__(self, name):
-            self.name = name
-        def __enter__(self):
-            return self
-        def __exit__(self, *args):
-            pass
-
-try:
-    from .exceptions import AntivirusError, handle_exception
-except ImportError:
-    print("Warning: exceptions module not available")
-    
-    class AntivirusError(Exception):
-        pass
-    
-    def handle_exception(error, logger_func, reraise=True):
-        logger_func(f"Error: {error}")
-        if reraise:
-            raise error
-
-# CLI implementation with and without click
-if CLICK_AVAILABLE:
-    @click.group()
-    @click.version_option(version=__version__, prog_name="Prashant918 Advanced Antivirus")
-    @click.option('--config', '-c', help='Configuration file path')
-    @click.option('--verbose', '-v', is_flag=True, help='Verbose output')
-    @click.option('--quiet', '-q', is_flag=True, help='Quiet mode')
-    @click.pass_context
-    def main(ctx, config, verbose, quiet):
-        """
-        Prashant918 Advanced Antivirus - Enterprise Cybersecurity Solution
-        
-        A comprehensive cybersecurity platform providing advanced threat detection,
-        real-time monitoring, and enterprise-grade protection capabilities.
-        """
-        # Ensure context object exists
-        ctx.ensure_object(dict)
-        
-        # Store global options
-        ctx.obj['config'] = config
-        ctx.obj['verbose'] = verbose
-        ctx.obj['quiet'] = quiet
-        
-        # Set console verbosity
-        if quiet and hasattr(console, 'quiet'):
-            console.quiet = True
-        
-        # Display banner if not quiet
-        if not quiet:
-            display_banner()
-
-    @main.command()
-    @click.argument('path', type=click.Path(exists=True))
-    @click.option('--recursive', '-r', is_flag=True, help='Scan recursively')
-    @click.option('--output', '-o', help='Output file for results')
-    @click.option('--format', 'output_format', type=click.Choice(['json', 'table', 'csv']), 
-                  default='table', help='Output format')
-    @click.option('--threads', '-t', type=int, default=4, help='Number of threads')
-    @click.pass_context
-    def scan(ctx, path, recursive, output, output_format, threads):
-        """Scan files or directories for threats"""
-        try:
-            with PerformanceTimer("Scan operation"):
-                # Try to import antivirus engine
-                try:
-                    from .antivirus.engine import AdvancedThreatDetectionEngine
-                    engine = AdvancedThreatDetectionEngine()
-                except ImportError:
-                    console.print("❌ Antivirus engine not available. Please check dependencies.", style="red")
-                    return
-                
-                console.print("🔧 Initializing antivirus engine...", style="yellow")
-                
-                # Collect files to scan
-                files_to_scan = collect_files(path, recursive)
-                
-                if not files_to_scan:
-                    console.print("❌ No files found to scan", style="red")
-                    return
-                
-                console.print(f"📁 Found {len(files_to_scan)} files to scan", style="green")
-                
-                # Perform scanning with progress bar
-                results = perform_scan(engine, files_to_scan, threads)
-                
-                # Display results
-                display_scan_results(results, output_format)
-                
-                # Save results if output specified
-                if output:
-                    save_results(results, output, output_format)
-                    console.print(f"💾 Results saved to {output}", style="green")
-        
-        except Exception as e:
-            handle_exception(e, console.print, reraise=False)
-            sys.exit(1)
-
-    @main.command()
-    @click.option('--show-system', is_flag=True, help='Show system information')
-    @click.option('--show-deps', is_flag=True, help='Show dependency status')
-    @click.option('--show-config', is_flag=True, help='Show configuration')
-    @click.option('--show-stats', is_flag=True, help='Show statistics')
-    @click.pass_context
-    def info(ctx, show_system, show_deps, show_config, show_stats):
-        """Display system and application information"""
-        try:
-            if show_system:
-                system_info = get_system_info()
-                display_system_info(system_info)
-            
-            if show_deps:
-                deps_info = check_dependencies()
-                display_dependencies_info(deps_info)
-            
-            if show_config:
-                try:
-                    from .antivirus.config import secure_config
-                    config_info = {"status": "Config loaded successfully"}
-                    display_config_info(config_info)
-                except ImportError:
-                    console.print("❌ Configuration module not available", style="red")
-            
-            if show_stats:
-                try:
-                    from .antivirus.signatures import AdvancedSignatureManager
-                    signature_manager = AdvancedSignatureManager()
-                    stats = signature_manager.get_threat_statistics()
-                    display_threat_statistics(stats)
-                except ImportError:
-                    console.print("❌ Statistics module not available", style="red")
-            
-            if not any([show_system, show_deps, show_config, show_stats]):
-                # Show basic info by default
-                console.print(f"Prashant918 Advanced Antivirus v{__version__}", style="bold")
-                console.print(f"Author: {__author__}")
-                console.print("\nUse --help for available options")
-        
-        except Exception as e:
-            handle_exception(e, console.print, reraise=False)
-            sys.exit(1)
-
-else:
-    # Fallback implementation without click
-    def main():
-        """Main CLI function without click"""
-        import argparse
-        
-        parser = argparse.ArgumentParser(
-            description="Prashant918 Advanced Antivirus - Enterprise Cybersecurity Solution"
-        )
-        parser.add_argument('--version', action='version', version=f'Prashant918 Advanced Antivirus {__version__}')
-        parser.add_argument('--config', '-c', help='Configuration file path')
-        parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
-        parser.add_argument('--quiet', '-q', action='store_true', help='Quiet mode')
-        
-        subparsers = parser.add_subparsers(dest='command', help='Available commands')
-        
-        # Scan command
-        scan_parser = subparsers.add_parser('scan', help='Scan files or directories')
-        scan_parser.add_argument('path', help='Path to scan')
-        scan_parser.add_argument('--recursive', '-r', action='store_true', help='Scan recursively')
-        scan_parser.add_argument('--output', '-o', help='Output file for results')
-        scan_parser.add_argument('--format', choices=['json', 'table', 'csv'], default='table', help='Output format')
-        scan_parser.add_argument('--threads', '-t', type=int, default=4, help='Number of threads')
-        
-        # Info command
-        info_parser = subparsers.add_parser('info', help='Show system information')
-        info_parser.add_argument('--show-system', action='store_true', help='Show system information')
-        info_parser.add_argument('--show-deps', action='store_true', help='Show dependency status')
-        info_parser.add_argument('--show-config', action='store_true', help='Show configuration')
-        info_parser.add_argument('--show-stats', action='store_true', help='Show statistics')
-        
-        args = parser.parse_args()
-        
-        if not args.quiet:
-            display_banner()
-        
-        if args.command == 'scan':
-            handle_scan_command(args)
-        elif args.command == 'info':
-            handle_info_command(args)
-        else:
-            parser.print_help()
-
-def display_banner():
-    """Display application banner"""
-    if RICH_AVAILABLE:
-        banner_text = f"""
+    def display_banner(self):
+        """Display application banner"""
+        if HAS_RICH:
+            banner_text = f"""
 ╔══════════════════════════════════════════════════════════════╗
 ║                 Prashant918 Advanced Antivirus              ║
 ║                Enterprise Cybersecurity Solution            ║
@@ -271,321 +119,649 @@ def display_banner():
 ║  🛡️  Multi-layered Threat Detection                         ║
 ║  🤖  AI/ML Powered Analysis                                  ║
 ║  🔍  Real-time Monitoring                                    ║
-║  🏢  Enterprise Oracle Backend                               ║
+║  🏢  Cross-platform Compatibility                           ║
 ╚══════════════════════════════════════════════════════════════╝
-        """
-        console.print(Panel(banner_text, style="bold blue"))
-    else:
-        print("="*60)
-        print("         Prashant918 Advanced Antivirus")
-        print("        Enterprise Cybersecurity Solution")
-        print("")
-        print(f"  Version: {__version__}    Author: {__author__}")
-        print("")
-        print("  🛡️  Multi-layered Threat Detection")
-        print("  🤖  AI/ML Powered Analysis")
-        print("  🔍  Real-time Monitoring")
-        print("  🏢  Enterprise Oracle Backend")
-        print("="*60)
-
-def collect_files(path: str, recursive: bool) -> List[str]:
-    """Collect files to scan"""
-    files = []
-    path_obj = Path(path)
-    
-    if path_obj.is_file():
-        files.append(str(path_obj))
-    elif path_obj.is_dir():
-        if recursive:
-            for file_path in path_obj.rglob('*'):
-                if file_path.is_file():
-                    files.append(str(file_path))
+            """
+            console.print(Panel(banner_text, style="bold blue"))
         else:
-            for file_path in path_obj.iterdir():
-                if file_path.is_file():
-                    files.append(str(file_path))
+            print("=" * 60)
+            print("         Prashant918 Advanced Antivirus")
+            print("        Enterprise Cybersecurity Solution")
+            print("")
+            print(f"  Version: {__version__}    Author: {__author__}")
+            print("")
+            print("  🛡️  Multi-layered Threat Detection")
+            print("  🤖  AI/ML Powered Analysis")
+            print("  🔍  Real-time Monitoring")
+            print("  🏢  Cross-platform Compatibility")
+            print("=" * 60)
     
-    return files
-
-def perform_scan(engine, files: List[str], threads: int) -> List[Dict[str, Any]]:
-    """Perform scanning with progress tracking"""
-    results = []
+    def scan_command(self, path: str, recursive: bool = True, output: Optional[str] = None, 
+                    format_type: str = "table") -> bool:
+        """Scan files or directories for threats"""
+        try:
+            if not self.threat_engine:
+                self._print_error("Threat detection engine not available")
+                return False
+            
+            path_obj = Path(path)
+            if not path_obj.exists():
+                self._print_error(f"Path does not exist: {path}")
+                return False
+            
+            # Collect files to scan
+            files_to_scan = self._collect_files(path_obj, recursive)
+            
+            if not files_to_scan:
+                self._print_warning("No files found to scan")
+                return True
+            
+            self._print_info(f"Scanning {len(files_to_scan)} files...")
+            
+            # Perform scan
+            results = self._perform_scan(files_to_scan)
+            
+            # Display results
+            self._display_scan_results(results, format_type)
+            
+            # Save results if requested
+            if output:
+                self._save_results(results, output, format_type)
+            
+            # Summary
+            threats_found = sum(1 for r in results if r.get('threat_level') in ['malware', 'critical'])
+            suspicious_found = sum(1 for r in results if r.get('threat_level') == 'suspicious')
+            
+            if threats_found > 0:
+                self._print_error(f"Scan completed: {threats_found} threats found, {suspicious_found} suspicious files")
+                return False
+            else:
+                self._print_success(f"Scan completed: No threats found, {suspicious_found} suspicious files")
+                return True
+                
+        except Exception as e:
+            self._print_error(f"Scan failed: {e}")
+            return False
     
-    if RICH_AVAILABLE:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            
-            task = progress.add_task("Scanning files...", total=len(files))
-            
-            for i, file_path in enumerate(files):
+    def _collect_files(self, path: Path, recursive: bool) -> List[str]:
+        """Collect files to scan"""
+        files = []
+        
+        try:
+            if path.is_file():
+                files.append(str(path))
+            elif path.is_dir():
+                if recursive:
+                    for file_path in path.rglob("*"):
+                        if file_path.is_file():
+                            files.append(str(file_path))
+                else:
+                    for file_path in path.iterdir():
+                        if file_path.is_file():
+                            files.append(str(file_path))
+        except Exception as e:
+            self.logger.error(f"Error collecting files: {e}")
+        
+        return files
+    
+    def _perform_scan(self, files: List[str]) -> List[Dict[str, Any]]:
+        """Perform scan on files"""
+        results = []
+        
+        if HAS_RICH:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console
+            ) as progress:
+                task = progress.add_task("Scanning files...", total=len(files))
+                
+                for file_path in files:
+                    try:
+                        progress.update(task, description=f"Scanning: {Path(file_path).name}")
+                        
+                        scan_result = self.threat_engine.scan_file(file_path)
+                        
+                        result = {
+                            'file_path': file_path,
+                            'file_name': Path(file_path).name,
+                            'threat_level': scan_result.threat_level.value,
+                            'threat_name': scan_result.threat_name,
+                            'confidence': scan_result.confidence,
+                            'detection_method': scan_result.detection_method,
+                            'scan_time': scan_result.scan_time,
+                            'file_size': self._get_file_size(file_path)
+                        }
+                        
+                        results.append(result)
+                        progress.advance(task)
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error scanning {file_path}: {e}")
+                        results.append({
+                            'file_path': file_path,
+                            'file_name': Path(file_path).name,
+                            'threat_level': 'error',
+                            'error': str(e)
+                        })
+                        progress.advance(task)
+        else:
+            for i, file_path in enumerate(files, 1):
                 try:
-                    result = engine.scan_file(file_path)
+                    print(f"Scanning ({i}/{len(files)}): {Path(file_path).name}")
+                    
+                    scan_result = self.threat_engine.scan_file(file_path)
+                    
+                    result = {
+                        'file_path': file_path,
+                        'file_name': Path(file_path).name,
+                        'threat_level': scan_result.threat_level.value,
+                        'threat_name': scan_result.threat_name,
+                        'confidence': scan_result.confidence,
+                        'detection_method': scan_result.detection_method,
+                        'scan_time': scan_result.scan_time,
+                        'file_size': self._get_file_size(file_path)
+                    }
+                    
                     results.append(result)
                     
-                    # Update progress
-                    progress.update(
-                        task, 
-                        advance=1, 
-                        description=f"Scanning: {os.path.basename(file_path)}"
-                    )
-                    
                 except Exception as e:
+                    self.logger.error(f"Error scanning {file_path}: {e}")
                     results.append({
-                        "file_path": file_path,
-                        "error": str(e),
-                        "classification": "ERROR"
+                        'file_path': file_path,
+                        'file_name': Path(file_path).name,
+                        'threat_level': 'error',
+                        'error': str(e)
                     })
-    else:
-        # Simple progress without rich
-        for i, file_path in enumerate(files):
-            print(f"Scanning {i+1}/{len(files)}: {os.path.basename(file_path)}")
-            try:
-                result = engine.scan_file(file_path)
-                results.append(result)
-            except Exception as e:
-                results.append({
-                    "file_path": file_path,
-                    "error": str(e),
-                    "classification": "ERROR"
-                })
+        
+        return results
     
-    return results
-
-def display_scan_results(results: List[Dict[str, Any]], format_type: str):
-    """Display scan results in specified format"""
-    if format_type == 'table':
-        display_results_table(results)
-    elif format_type == 'json':
-        print(json.dumps(results, indent=2))
-    elif format_type == 'csv':
-        display_results_csv(results)
-
-def display_results_table(results: List[Dict[str, Any]]):
-    """Display results in table format"""
-    if RICH_AVAILABLE:
-        table = Table(title="Scan Results")
+    def _display_scan_results(self, results: List[Dict[str, Any]], format_type: str):
+        """Display scan results"""
+        if format_type == "json":
+            print(json.dumps(results, indent=2, default=str))
+            return
         
-        table.add_column("File", style="cyan")
-        table.add_column("Status", style="magenta")
-        table.add_column("Threats", style="red")
-        table.add_column("Score", style="yellow")
-        table.add_column("Size", style="green")
-        
-        for result in results:
-            file_path = result.get("file_path", "Unknown")
-            classification = result.get("classification", "Unknown")
-            threat_count = len(result.get("detections", []))
-            threat_score = result.get("threat_score", 0.0)
-            file_size = result.get("file_size", 0)
+        if HAS_RICH and format_type == "table":
+            table = Table(title="Scan Results")
+            table.add_column("File", style="cyan")
+            table.add_column("Status", style="white")
+            table.add_column("Threat", style="red")
+            table.add_column("Confidence", style="yellow")
+            table.add_column("Size", style="green")
             
-            # Color code status
-            if classification == "CLEAN":
-                status_style = "green"
-            elif classification in ["SUSPICIOUS", "POTENTIALLY_UNWANTED"]:
-                status_style = "yellow"
-            elif classification == "MALICIOUS":
-                status_style = "red"
-            else:
-                status_style = "white"
-            
-            table.add_row(
-                os.path.basename(file_path),
-                Text(classification, style=status_style),
-                str(threat_count),
-                f"{threat_score:.2f}",
-                format_bytes(file_size)
-            )
-        
-        console.print(table)
-    else:
-        # Simple table without rich
-        print("\nScan Results:")
-        print("-" * 80)
-        print(f"{'File':<30} {'Status':<15} {'Threats':<8} {'Score':<8} {'Size':<10}")
-        print("-" * 80)
-        
-        for result in results:
-            file_path = result.get("file_path", "Unknown")
-            classification = result.get("classification", "Unknown")
-            threat_count = len(result.get("detections", []))
-            threat_score = result.get("threat_score", 0.0)
-            file_size = result.get("file_size", 0)
-            
-            print(f"{os.path.basename(file_path)[:29]:<30} {classification:<15} {threat_count:<8} {threat_score:<8.2f} {format_bytes(file_size):<10}")
-    
-    # Summary
-    total_files = len(results)
-    clean_files = sum(1 for r in results if r.get("classification") == "CLEAN")
-    threat_files = total_files - clean_files
-    
-    print(f"\n📊 Summary: {total_files} files scanned, {clean_files} clean, {threat_files} threats detected")
-
-def display_results_csv(results: List[Dict[str, Any]]):
-    """Display results in CSV format"""
-    print("File,Status,Threats,Score,Size")
-    for result in results:
-        file_path = result.get("file_path", "")
-        classification = result.get("classification", "")
-        threat_count = len(result.get("detections", []))
-        threat_score = result.get("threat_score", 0.0)
-        file_size = result.get("file_size", 0)
-        
-        print(f'"{os.path.basename(file_path)}","{classification}",{threat_count},{threat_score},{file_size}')
-
-def display_system_info(info: Dict[str, Any]):
-    """Display system information"""
-    if RICH_AVAILABLE:
-        table = Table(title="System Information")
-        table.add_column("Component", style="cyan")
-        table.add_column("Details", style="white")
-        
-        # Platform info
-        platform_info = info.get("platform", {})
-        table.add_row("Operating System", f"{platform_info.get('system', 'Unknown')} {platform_info.get('release', '')}")
-        table.add_row("Architecture", platform_info.get("machine", "Unknown"))
-        table.add_row("Processor", platform_info.get("processor", "Unknown"))
-        
-        # Memory info
-        memory_info = info.get("memory", {})
-        table.add_row("Total Memory", f"{memory_info.get('total_gb', 0):.1f} GB")
-        table.add_row("Available Memory", f"{memory_info.get('available_gb', 0):.1f} GB")
-        table.add_row("Memory Usage", f"{memory_info.get('used_percent', 0):.1f}%")
-        
-        console.print(table)
-    else:
-        print("\nSystem Information:")
-        print("-" * 40)
-        platform_info = info.get("platform", {})
-        print(f"OS: {platform_info.get('system', 'Unknown')} {platform_info.get('release', '')}")
-        print(f"Architecture: {platform_info.get('machine', 'Unknown')}")
-        
-        memory_info = info.get("memory", {})
-        print(f"Memory: {memory_info.get('total_gb', 0):.1f} GB total, {memory_info.get('available_gb', 0):.1f} GB available")
-
-def display_dependencies_info(deps: Dict[str, Any]):
-    """Display dependency information"""
-    if RICH_AVAILABLE:
-        table = Table(title="Dependencies Status")
-        table.add_column("Package", style="cyan")
-        table.add_column("Status", style="magenta")
-        table.add_column("Version", style="yellow")
-        table.add_column("Required", style="green")
-        
-        # Required dependencies
-        for package, info in deps.get("required", {}).items():
-            status = "✅ Available" if info["available"] else "❌ Missing"
-            status_style = "green" if info["available"] else "red"
-            
-            table.add_row(
-                package,
-                Text(status, style=status_style),
-                info.get("version", "N/A"),
-                info.get("requirement", "N/A")
-            )
-        
-        console.print(table)
-    else:
-        print("\nDependencies Status:")
-        print("-" * 60)
-        for package, info in deps.get("required", {}).items():
-            status = "✅ Available" if info["available"] else "❌ Missing"
-            print(f"{package:<20} {status:<15} {info.get('version', 'N/A'):<15}")
-    
-    # Summary
-    missing_required = deps.get("missing_required", [])
-    if missing_required:
-        print(f"\n❌ Missing required dependencies: {', '.join(missing_required)}")
-    else:
-        print("\n✅ All required dependencies are available")
-
-def display_config_info(config_info: Dict[str, Any]):
-    """Display configuration information"""
-    print("\nConfiguration Status:")
-    print("-" * 30)
-    for key, value in config_info.items():
-        print(f"{key}: {value}")
-
-def display_threat_statistics(stats: Dict[str, Any]):
-    """Display threat statistics"""
-    print("\nThreat Statistics:")
-    print("-" * 30)
-    for key, value in stats.items():
-        print(f"{key}: {value}")
-
-def save_results(results: List[Dict[str, Any]], output_path: str, format_type: str):
-    """Save scan results to file"""
-    with open(output_path, 'w') as f:
-        if format_type == 'json':
-            json.dump(results, f, indent=2)
-        elif format_type == 'csv':
-            f.write("File,Status,Threats,Score,Size\n")
             for result in results:
-                f.write(f'"{os.path.basename(result.get("file_path", ""))}",')
-                f.write(f'"{result.get("classification", "")}",')
-                f.write(f'{len(result.get("detections", []))},')
-                f.write(f'{result.get("threat_score", 0.0)},')
-                f.write(f'{result.get("file_size", 0)}\n')
+                status_style = self._get_status_style(result.get('threat_level', 'unknown'))
+                
+                table.add_row(
+                    result.get('file_name', 'Unknown'),
+                    Text(result.get('threat_level', 'unknown').upper(), style=status_style),
+                    result.get('threat_name', '') or '',
+                    f"{result.get('confidence', 0):.2f}" if result.get('confidence') else '',
+                    self._format_file_size(result.get('file_size', 0))
+                )
+            
+            console.print(table)
+        else:
+            # Simple text output
+            print("\nScan Results:")
+            print("-" * 80)
+            print(f"{'File':<30} {'Status':<12} {'Threat':<20} {'Confidence':<10}")
+            print("-" * 80)
+            
+            for result in results:
+                print(f"{result.get('file_name', 'Unknown')[:29]:<30} "
+                      f"{result.get('threat_level', 'unknown').upper():<12} "
+                      f"{(result.get('threat_name') or '')[:19]:<20} "
+                      f"{result.get('confidence', 0):.2f}")
+    
+    def _get_status_style(self, threat_level: str) -> str:
+        """Get Rich style for threat level"""
+        styles = {
+            'clean': 'green',
+            'suspicious': 'yellow',
+            'malware': 'red',
+            'critical': 'bold red',
+            'error': 'magenta'
+        }
+        return styles.get(threat_level.lower(), 'white')
+    
+    def _get_file_size(self, file_path: str) -> int:
+        """Get file size safely"""
+        try:
+            return Path(file_path).stat().st_size
+        except Exception:
+            return 0
+    
+    def _format_file_size(self, size: int) -> str:
+        """Format file size for display"""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+    
+    def _save_results(self, results: List[Dict[str, Any]], output_path: str, format_type: str):
+        """Save scan results to file"""
+        try:
+            with open(output_path, 'w') as f:
+                if format_type == "json":
+                    json.dump(results, f, indent=2, default=str)
+                elif format_type == "csv":
+                    f.write("File,Status,Threat,Confidence,Size\n")
+                    for result in results:
+                        f.write(f'"{result.get("file_name", "")}",')
+                        f.write(f'"{result.get("threat_level", "")}",')
+                        f.write(f'"{result.get("threat_name", "")}",')
+                        f.write(f'{result.get("confidence", 0):.2f},')
+                        f.write(f'{result.get("file_size", 0)}\n')
+            
+            self._print_success(f"Results saved to: {output_path}")
+            
+        except Exception as e:
+            self._print_error(f"Failed to save results: {e}")
+    
+    def info_command(self) -> bool:
+        """Display system and antivirus information"""
+        try:
+            self._print_info("System Information:")
+            
+            # System info
+            system_info = self._get_system_info()
+            self._display_system_info(system_info)
+            
+            # Component status
+            self._print_info("\nComponent Status:")
+            self._display_component_status()
+            
+            # Configuration info
+            config_info = self._get_config_info()
+            if config_info:
+                self._print_info("\nConfiguration:")
+                self._display_config_info(config_info)
+            
+            return True
+            
+        except Exception as e:
+            self._print_error(f"Info command failed: {e}")
+            return False
+    
+    def _get_system_info(self) -> Dict[str, Any]:
+        """Get system information"""
+        import platform
+        
+        info = {
+            'platform': {
+                'system': platform.system(),
+                'release': platform.release(),
+                'version': platform.version(),
+                'machine': platform.machine(),
+                'processor': platform.processor()
+            }
+        }
+        
+        if HAS_PSUTIL:
+            try:
+                memory = psutil.virtual_memory()
+                info['memory'] = {
+                    'total_gb': memory.total / (1024**3),
+                    'available_gb': memory.available / (1024**3),
+                    'used_percent': memory.percent
+                }
+                
+                disk = psutil.disk_usage('/')
+                info['disk'] = {
+                    'total_gb': disk.total / (1024**3),
+                    'free_gb': disk.free / (1024**3),
+                    'used_percent': (disk.used / disk.total) * 100
+                }
+            except Exception as e:
+                self.logger.debug(f"Error getting system stats: {e}")
+        
+        return info
+    
+    def _display_system_info(self, info: Dict[str, Any]):
+        """Display system information"""
+        if HAS_RICH:
+            table = Table(title="System Information")
+            table.add_column("Component", style="cyan")
+            table.add_column("Details", style="white")
+            
+            # Platform info
+            platform_info = info.get("platform", {})
+            table.add_row("Operating System", 
+                         f"{platform_info.get('system', 'Unknown')} {platform_info.get('release', '')}")
+            table.add_row("Architecture", platform_info.get("machine", "Unknown"))
+            table.add_row("Processor", platform_info.get("processor", "Unknown"))
+            
+            # Memory info
+            memory_info = info.get("memory", {})
+            if memory_info:
+                table.add_row("Total Memory", f"{memory_info.get('total_gb', 0):.1f} GB")
+                table.add_row("Available Memory", f"{memory_info.get('available_gb', 0):.1f} GB")
+                table.add_row("Memory Usage", f"{memory_info.get('used_percent', 0):.1f}%")
+            
+            # Disk info
+            disk_info = info.get("disk", {})
+            if disk_info:
+                table.add_row("Total Disk", f"{disk_info.get('total_gb', 0):.1f} GB")
+                table.add_row("Free Disk", f"{disk_info.get('free_gb', 0):.1f} GB")
+                table.add_row("Disk Usage", f"{disk_info.get('used_percent', 0):.1f}%")
+            
+            console.print(table)
+        else:
+            platform_info = info.get("platform", {})
+            print(f"OS: {platform_info.get('system', 'Unknown')} {platform_info.get('release', '')}")
+            print(f"Architecture: {platform_info.get('machine', 'Unknown')}")
+            
+            memory_info = info.get("memory", {})
+            if memory_info:
+                print(f"Memory: {memory_info.get('total_gb', 0):.1f} GB total, "
+                      f"{memory_info.get('available_gb', 0):.1f} GB available")
+    
+    def _display_component_status(self):
+        """Display component status"""
+        components = {
+            'Threat Engine': self.threat_engine is not None,
+            'Quarantine Manager': self.quarantine_manager is not None,
+            'Real-time Monitor': self.realtime_monitor is not None,
+            'Service Manager': self.service_manager is not None
+        }
+        
+        if HAS_RICH:
+            table = Table(title="Component Status")
+            table.add_column("Component", style="cyan")
+            table.add_column("Status", style="white")
+            
+            for component, available in components.items():
+                status = Text("✅ Available" if available else "❌ Not Available",
+                            style="green" if available else "red")
+                table.add_row(component, status)
+            
+            console.print(table)
+        else:
+            for component, available in components.items():
+                status = "✅ Available" if available else "❌ Not Available"
+                print(f"{component}: {status}")
+    
+    def _get_config_info(self) -> Dict[str, Any]:
+        """Get configuration information"""
+        try:
+            return {
+                'ML Threshold': secure_config.get('detection.ml_threshold', 0.85),
+                'Real-time Monitoring': secure_config.get('monitoring.enabled', True),
+                'Auto Updates': secure_config.get('updates.auto_update', True),
+                'Quarantine Enabled': secure_config.get('quarantine.enabled', True)
+            }
+        except Exception as e:
+            self.logger.debug(f"Error getting config info: {e}")
+            return {}
+    
+    def _display_config_info(self, config_info: Dict[str, Any]):
+        """Display configuration information"""
+        if HAS_RICH:
+            table = Table(title="Configuration")
+            table.add_column("Setting", style="cyan")
+            table.add_column("Value", style="white")
+            
+            for key, value in config_info.items():
+                table.add_row(key, str(value))
+            
+            console.print(table)
+        else:
+            for key, value in config_info.items():
+                print(f"{key}: {value}")
+    
+    def service_command(self, action: str) -> bool:
+        """Handle service management commands"""
+        try:
+            if not self.service_manager:
+                self._print_error("Service manager not available")
+                return False
+            
+            if action == "install":
+                success = self.service_manager.install_service()
+                if success:
+                    self._print_success("Service installed successfully")
+                else:
+                    self._print_error("Service installation failed")
+                return success
+                
+            elif action == "uninstall":
+                success = self.service_manager.uninstall_service()
+                if success:
+                    self._print_success("Service uninstalled successfully")
+                else:
+                    self._print_error("Service uninstallation failed")
+                return success
+                
+            elif action == "start":
+                success = self.service_manager.start_service()
+                if success:
+                    self._print_success("Service started successfully")
+                else:
+                    self._print_error("Service start failed")
+                return success
+                
+            elif action == "stop":
+                success = self.service_manager.stop_service()
+                if success:
+                    self._print_success("Service stopped successfully")
+                else:
+                    self._print_error("Service stop failed")
+                return success
+                
+            elif action == "status":
+                status = self.service_manager.get_service_status()
+                self._display_service_status(status)
+                return True
+                
+            else:
+                self._print_error(f"Unknown service action: {action}")
+                return False
+                
+        except Exception as e:
+            self._print_error(f"Service command failed: {e}")
+            return False
+    
+    def _display_service_status(self, status: Dict[str, Any]):
+        """Display service status"""
+        if HAS_RICH:
+            table = Table(title="Service Status")
+            table.add_column("Property", style="cyan")
+            table.add_column("Value", style="white")
+            
+            for key, value in status.items():
+                if key != "monitor_status":  # Skip complex nested data
+                    table.add_row(key.replace('_', ' ').title(), str(value))
+            
+            console.print(table)
+        else:
+            print("Service Status:")
+            for key, value in status.items():
+                if key != "monitor_status":
+                    print(f"  {key.replace('_', ' ').title()}: {value}")
+    
+    def monitor_command(self, action: str, paths: Optional[List[str]] = None) -> bool:
+        """Handle real-time monitoring commands"""
+        try:
+            if not self.realtime_monitor:
+                self._print_error("Real-time monitor not available")
+                return False
+            
+            if action == "start":
+                if not paths:
+                    paths = [
+                        str(Path.home() / "Downloads"),
+                        str(Path.home() / "Desktop"),
+                        str(Path.home() / "Documents")
+                    ]
+                
+                success = self.realtime_monitor.start_monitoring(paths)
+                if success:
+                    self._print_success(f"Real-time monitoring started for {len(paths)} paths")
+                else:
+                    self._print_error("Failed to start real-time monitoring")
+                return success
+                
+            elif action == "stop":
+                self.realtime_monitor.stop_monitoring()
+                self._print_success("Real-time monitoring stopped")
+                return True
+                
+            elif action == "status":
+                status = self.realtime_monitor.get_status()
+                self._display_monitor_status(status)
+                return True
+                
+            else:
+                self._print_error(f"Unknown monitor action: {action}")
+                return False
+                
+        except Exception as e:
+            self._print_error(f"Monitor command failed: {e}")
+            return False
+    
+    def _display_monitor_status(self, status: Dict[str, Any]):
+        """Display monitor status"""
+        if HAS_RICH:
+            table = Table(title="Real-time Monitor Status")
+            table.add_column("Property", style="cyan")
+            table.add_column("Value", style="white")
+            
+            # Basic status
+            table.add_row("Monitoring", "✅ Active" if status.get('is_monitoring') else "❌ Inactive")
+            table.add_row("Uptime", f"{status.get('current_uptime', 0):.1f} seconds")
+            table.add_row("Monitored Paths", str(len(status.get('monitored_paths', []))))
+            
+            # Processor stats
+            processor_stats = status.get('processor_stats', {})
+            if processor_stats:
+                table.add_row("Events Processed", str(processor_stats.get('events_processed', 0)))
+                table.add_row("Threats Detected", str(processor_stats.get('threats_detected', 0)))
+                table.add_row("Files Quarantined", str(processor_stats.get('files_quarantined', 0)))
+            
+            console.print(table)
+        else:
+            print("Real-time Monitor Status:")
+            print(f"  Monitoring: {'Active' if status.get('is_monitoring') else 'Inactive'}")
+            print(f"  Uptime: {status.get('current_uptime', 0):.1f} seconds")
+            print(f"  Monitored Paths: {len(status.get('monitored_paths', []))}")
+            
+            processor_stats = status.get('processor_stats', {})
+            if processor_stats:
+                print(f"  Events Processed: {processor_stats.get('events_processed', 0)}")
+                print(f"  Threats Detected: {processor_stats.get('threats_detected', 0)}")
+    
+    def _print_success(self, message: str):
+        """Print success message"""
+        if HAS_RICH:
+            console.print(f"✅ {message}", style="green")
+        else:
+            print(f"✅ {message}")
+    
+    def _print_error(self, message: str):
+        """Print error message"""
+        if HAS_RICH:
+            console.print(f"❌ {message}", style="red")
+        else:
+            print(f"❌ {message}")
+    
+    def _print_warning(self, message: str):
+        """Print warning message"""
+        if HAS_RICH:
+            console.print(f"⚠️ {message}", style="yellow")
+        else:
+            print(f"⚠️ {message}")
+    
+    def _print_info(self, message: str):
+        """Print info message"""
+        if HAS_RICH:
+            console.print(f"ℹ️ {message}", style="blue")
+        else:
+            print(f"ℹ️ {message}")
 
-def handle_scan_command(args):
-    """Handle scan command for non-click version"""
+def main():
+    """Main CLI entry point"""
     try:
-        from .antivirus.engine import AdvancedThreatDetectionEngine
-        engine = AdvancedThreatDetectionEngine()
-    except ImportError:
-        print("❌ Antivirus engine not available. Please check dependencies.")
-        return
-    
-    print("🔧 Initializing antivirus engine...")
-    
-    files_to_scan = collect_files(args.path, args.recursive)
-    
-    if not files_to_scan:
-        print("❌ No files found to scan")
-        return
-    
-    print(f"📁 Found {len(files_to_scan)} files to scan")
-    
-    results = perform_scan(engine, files_to_scan, args.threads)
-    display_scan_results(results, args.format)
-    
-    if args.output:
-        save_results(results, args.output, args.format)
-        print(f"💾 Results saved to {args.output}")
+        cli = AntivirusCLI()
+        
+        # Create argument parser
+        parser = argparse.ArgumentParser(
+            description="Prashant918 Advanced Antivirus CLI",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+Examples:
+  %(prog)s scan /path/to/file
+  %(prog)s scan /path/to/directory --recursive
+  %(prog)s scan /path --output results.json --format json
+  %(prog)s info
+  %(prog)s service install
+  %(prog)s service start
+  %(prog)s monitor start
+            """
+        )
+        
+        parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
+        
+        subparsers = parser.add_subparsers(dest='command', help='Available commands')
+        
+        # Scan command
+        scan_parser = subparsers.add_parser('scan', help='Scan files or directories for threats')
+        scan_parser.add_argument('path', help='Path to scan')
+        scan_parser.add_argument('--recursive', '-r', action='store_true', default=True,
+                               help='Scan directories recursively (default: True)')
+        scan_parser.add_argument('--output', '-o', help='Output file for results')
+        scan_parser.add_argument('--format', '-f', choices=['table', 'json', 'csv'], 
+                               default='table', help='Output format (default: table)')
+        
+        # Info command
+        subparsers.add_parser('info', help='Display system and antivirus information')
+        
+        # Service command
+        service_parser = subparsers.add_parser('service', help='Manage antivirus service')
+        service_parser.add_argument('action', choices=['install', 'uninstall', 'start', 'stop', 'status'],
+                                  help='Service action')
+        
+        # Monitor command
+        monitor_parser = subparsers.add_parser('monitor', help='Manage real-time monitoring')
+        monitor_parser.add_argument('action', choices=['start', 'stop', 'status'],
+                                  help='Monitor action')
+        monitor_parser.add_argument('--paths', nargs='+', help='Paths to monitor')
+        
+        # Parse arguments
+        args = parser.parse_args()
+        
+        # Display banner
+        cli.display_banner()
+        
+        # Handle commands
+        if args.command == 'scan':
+            success = cli.scan_command(args.path, args.recursive, args.output, args.format)
+            sys.exit(0 if success else 1)
+            
+        elif args.command == 'info':
+            success = cli.info_command()
+            sys.exit(0 if success else 1)
+            
+        elif args.command == 'service':
+            success = cli.service_command(args.action)
+            sys.exit(0 if success else 1)
+            
+        elif args.command == 'monitor':
+            success = cli.monitor_command(args.action, args.paths)
+            sys.exit(0 if success else 1)
+            
+        else:
+            parser.print_help()
+            sys.exit(1)
+            
+    except KeyboardInterrupt:
+        print("\n⚠️ Operation cancelled by user")
+        sys.exit(0)
+    except Exception as e:
+        print(f"❌ CLI error: {e}")
+        sys.exit(1)
 
-def handle_info_command(args):
-    """Handle info command for non-click version"""
-    if args.show_system:
-        system_info = get_system_info()
-        display_system_info(system_info)
-    
-    if args.show_deps:
-        deps_info = check_dependencies()
-        display_dependencies_info(deps_info)
-    
-    if args.show_config:
-        try:
-            from .antivirus.config import secure_config
-            config_info = {"status": "Config loaded successfully"}
-            display_config_info(config_info)
-        except ImportError:
-            print("❌ Configuration module not available")
-    
-    if args.show_stats:
-        try:
-            from .antivirus.signatures import AdvancedSignatureManager
-            signature_manager = AdvancedSignatureManager()
-            stats = signature_manager.get_threat_statistics()
-            display_threat_statistics(stats)
-        except ImportError:
-            print("❌ Statistics module not available")
-    
-    if not any([args.show_system, args.show_deps, args.show_config, args.show_stats]):
-        print(f"Prashant918 Advanced Antivirus v{__version__}")
-        print(f"Author: {__author__}")
-        print("\nUse --help for available options")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

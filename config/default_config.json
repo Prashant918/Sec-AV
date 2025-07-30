@@ -1,0 +1,94 @@
+{
+  "security": {
+    "max_file_size": 104857600,
+    "allowed_extensions": [
+      ".exe", ".dll", ".pdf", ".doc", ".docx", ".xls", ".xlsx",
+      ".zip", ".rar", ".7z", ".tar", ".gz", ".jpg", ".png", ".gif"
+    ],
+    "quarantine_encryption": true,
+    "secure_delete": true,
+    "permission_check": true
+  },
+  "detection": {
+    "ml_threshold": 0.85,
+    "heuristic_threshold": 0.75,
+    "behavioral_threshold": 0.80,
+    "signature_threshold": 0.90,
+    "enable_ml": true,
+    "enable_heuristics": true,
+    "enable_behavioral": true,
+    "enable_signatures": true,
+    "detection_weights": {
+      "ml": 0.35,
+      "heuristic": 0.20,
+      "behavioral": 0.25,
+      "signature": 0.20
+    }
+  },
+  "monitoring": {
+    "enabled": true,
+    "paths": [
+      "~/Downloads",
+      "~/Desktop", 
+      "~/Documents"
+    ],
+    "extensions": [".exe", ".scr", ".bat", ".cmd", ".com", ".pif"],
+    "real_time_scan": true,
+    "monitor_usb": true,
+    "monitor_network": true,
+    "scan_archives": true
+  },
+  "logging": {
+    "level": "INFO",
+    "max_file_size": 10485760,
+    "backup_count": 5,
+    "log_to_file": true,
+    "log_to_console": true,
+    "secure_logging": true
+  },
+  "database": {
+    "type": "sqlite",
+    "sqlite_path": "~/.prashant918_antivirus/data/antivirus.db",
+    "oracle": {
+      "host": "localhost",
+      "port": 1521,
+      "service_name": "XEPDB1",
+      "username": "antivirus",
+      "password": "",
+      "pool_size": 5,
+      "max_overflow": 10
+    }
+  },
+  "cloud": {
+    "enabled": true,
+    "virustotal_api_key": "",
+    "malwarebazaar_api_key": "",
+    "hybrid_analysis_api_key": "",
+    "update_interval": 3600,
+    "cache_ttl": 86400,
+    "max_file_size": 33554432
+  },
+  "performance": {
+    "max_threads": 4,
+    "max_processes": 2,
+    "cache_size": 1000,
+    "cache_ttl": 3600,
+    "memory_limit": 536870912,
+    "scan_timeout": 300
+  },
+  "quarantine": {
+    "directory": "~/.prashant918_antivirus/quarantine",
+    "max_size": 1073741824,
+    "retention_days": 30,
+    "encryption_enabled": true,
+    "secure_delete": true
+  },
+  "updates": {
+    "auto_update": true,
+    "check_interval": 3600,
+    "signature_sources": [
+      "https://signatures.prashant918.com/latest"
+    ],
+    "backup_before_update": true
+  }
+}
