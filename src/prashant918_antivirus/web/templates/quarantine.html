@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prashant918 Advanced Antivirus - Quarantine</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/quarantine.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-shield-alt"></i>
+                    <h2>Prashant918 AV</h2>
+                </div>
+            </div>
+            
+            <ul class="nav-menu">
+                <li class="nav-item">
+                    <a href="/" class="nav-link">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/scan" class="nav-link">
+                        <i class="fas fa-search"></i>
+                        <span>Scan</span>
+                    </a>
+                </li>
+                <li class="nav-item active">
+                    <a href="/quarantine" class="nav-link">
+                        <i class="fas fa-lock"></i>
+                        <span>Quarantine</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/logs" class="nav-link">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Logs</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/settings" class="nav-link">
+                        <i class="fas fa-cog"></i>
+                        <span>Settings</span>
+                    </a>
+                </li>
+            </ul>
+            
+            <div class="sidebar-footer">
+                <div class="system-status">
+                    <div class="status-indicator" id="systemStatus">
+                        <i class="fas fa-circle"></i>
+                        <span>System Active</span>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-left">
+                    <h1>Quarantine Management</h1>
+                    <p>Secure isolation and management of detected threats</p>
+                </div>
+                <div class="header-right">
+                    <div class="quarantine-stats">
+                        <div class="stat-item">
+                            <i class="fas fa-lock"></i>
+                            <span id="quarantineCount">0 items quarantined</span>
+                        </div>
+                    </div>
+                    <button class="theme-toggle" id="themeToggle">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Quarantine Content -->
+            <div class="quarantine-content">
+                <!-- Quarantine Overview -->
+                <div class="quarantine-overview">
+                    <div class="overview-cards">
+                        <div class="overview-card total">
+                            <div class="card-icon">
+                                <i class="fas fa-lock"></i>
+                            </div>
+                            <div class="card-content">
+                                <h3>Total Quarantined</h3>
+                                <div class="stat-number" id="totalQuarantined">0</div>
+                                <div class="stat-change">Files secured</div>
+                            </div>
+                        </div>
+
+                        <div class="overview-card recent">
+                            <div class="card-icon">
+                                <i class="fas fa-clock"></i>
+                            </div>
+                            <div class="card-content">
+                                <h3>Recent (24h)</h3>
+                                <div class="stat-number" id="recentQuarantined">0</div>
+                                <div class="stat-change">New threats</div>
+                            </div>
+                        </div>
+
+                        <div class="overview-card storage">
+                            <div class="card-icon">
+                                <i class="fas fa-hdd"></i>
+                            </div>
+                            <div class="card-content">
+                                <h3>Storage Used</h3>
+                                <div class="stat-number" id="storageUsed">0 MB</div>
+                                <div class="stat-change">Quarantine space</div>
+                            </div>
+                        </div>
+
+                        <div class="overview-card restored">
+                            <div class="card-icon">
+                                <i class="fas fa-undo"></i>
+                            </div>
+                            <div class="card-content">
+                                <h3>Restored</h3>
+                                <div class="stat-number" id="totalRestored">0</div>
+                                <div class="stat-change">Files recovered</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quarantine Controls -->
+                <div class="quarantine-controls">
+                    <div class="controls-left">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="searchQuarantine" placeholder="Search quarantined files...">
+                        </div>
+                        <div class="filter-controls">
+                            <select id="threatTypeFilter">
+                                <option value="all">All Threat Types</option>
+                                <option value="malware">Malware</option>
+                                <option value="virus">Virus</option>
+                                <option value="trojan">Trojan</option>
+                                <option value="adware">Adware</option>
+                                <option value="suspicious">Suspicious</option>
+                            </select>
+                            <select id="dateFilter">
+                                <option value="all">All Dates</option>
+                                <option value="today">Today</option>
+                                <option value="week">This Week</option>
+                                <option value="month">This Month</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="controls-right">
+                        <button class="btn btn-secondary" id="refreshQuarantine">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh
+                        </button>
+                        <button class="btn btn-warning" id="cleanupOld">
+                            <i class="fas fa-broom"></i>
+                            Cleanup Old
+                        </button>
+                        <button class="btn btn-danger" id="deleteSelected" disabled>
+                            <i class="fas fa-trash"></i>
+                            Delete Selected
+                        </button>
+                        <button class="btn btn-primary" id="restoreSelected" disabled>
+                            <i class="fas fa-undo"></i>
+                            Restore Selected
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Quarantine List -->
+                <div class="quarantine-list-section">
+                    <div class="list-header">
+                        <div class="bulk-actions">
+                            <label class="checkbox-container">
+                                <input type="checkbox" id="selectAll">
+                                <span class="checkmark"></span>
+                                <span class="checkbox-label">Select All</span>
+                            </label>
+                            <span class="selection-count" id="selectionCount">0 selected</span>
+                        </div>
+                        
+                        <div class="sort-controls">
+                            <label>Sort by:</label>
+                            <select id="sortBy">
+                                <option value="date">Date Quarantined</option>
+                                <option value="name">File Name</option>
+                                <option value="threat">Threat Type</option>
+                                <option value="size">File Size</option>
+                            </select>
+                            <button class="sort-direction" id="sortDirection" data-direction="desc">
+                                <i class="fas fa-sort-down"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="quarantine-list" id="quarantineList">
+                        <!-- Quarantine items will be populated here -->
+                    </div>
+                    
+                    <div class="list-pagination" id="listPagination">
+                        <!-- Pagination controls will be added here -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Quarantine Item Details Modal -->
+    <div class="modal-overlay" id="itemDetailsModal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h3>Quarantine Item Details</h3>
+                <button class="modal-close" id="closeDetailsModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="item-details" id="itemDetails">
+                    <!-- Item details will be populated here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="restoreItem">
+                    <i class="fas fa-undo"></i>
+                    Restore File
+                </button>
+                <button class="btn btn-danger" id="deleteItem">
+                    <i class="fas fa-trash"></i>
+                    Delete Permanently
+                </button>
+                <button class="btn btn-secondary" id="closeDetails">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Restore Confirmation Modal -->
+    <div class="modal-overlay" id="restoreConfirmModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Confirm Restore</h3>
+                <button class="modal-close" id="closeRestoreModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="confirmation-content">
+                    <div class="warning-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <div class="confirmation-text">
+                        <h4>Are you sure you want to restore this file?</h4>
+                        <p>This action will move the file back to its original location. Make sure you trust this file before restoring it.</p>
+                        <div class="file-info" id="restoreFileInfo">
+                            <!-- File information will be shown here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="confirmRestore">
+                    <i class="fas fa-undo"></i>
+                    Yes, Restore File
+                </button>
+                <button class="btn btn-secondary" id="cancelRestore">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal-overlay" id="deleteConfirmModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Confirm Deletion</h3>
+                <button class="modal-close" id="closeDeleteModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="confirmation-content">
+                    <div class="danger-icon">
+                        <i class="fas fa-trash-alt"></i>
+                    </div>
+                    <div class="confirmation-text">
+                        <h4>Permanently delete selected files?</h4>
+                        <p>This action cannot be undone. The files will be permanently removed from quarantine and cannot be recovered.</p>
+                        <div class="delete-count" id="deleteCount">
+                            <!-- Number of files to delete will be shown here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="confirmDelete">
+                    <i class="fas fa-trash"></i>
+                    Yes, Delete Permanently
+                </button>
+                <button class="btn btn-secondary" id="cancelDelete">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div class="notification-container" id="notificationContainer"></div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>Processing...</p>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/quarantine.js') }}"></script>
+</body>
+</html>

@@ -2,37 +2,40 @@
   "security": {
     "max_file_size": 104857600,
     "allowed_extensions": [
-      ".exe", ".dll", ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-      ".zip", ".rar", ".7z", ".tar", ".gz", ".jpg", ".png", ".gif"
+      ".exe", ".dll", ".sys", ".com", ".scr", ".pif", ".bat", ".cmd",
+      ".vbs", ".js", ".jar", ".pdf", ".doc", ".docx", ".xls", ".xlsx",
+      ".ppt", ".pptx", ".zip", ".rar", ".7z", ".tar", ".gz"
     ],
     "quarantine_encryption": true,
     "secure_delete": true,
     "permission_check": true
   },
   "detection": {
-    "ml_threshold": 0.85,
-    "heuristic_threshold": 0.75,
-    "behavioral_threshold": 0.80,
-    "signature_threshold": 0.90,
+    "ml_threshold": 0.7,
+    "heuristic_threshold": 0.6,
+    "behavioral_threshold": 0.8,
+    "signature_threshold": 0.9,
     "enable_ml": true,
     "enable_heuristics": true,
     "enable_behavioral": true,
     "enable_signatures": true,
+    "yara_rules_enabled": true,
+    "tensorflow_enabled": true,
     "detection_weights": {
-      "ml": 0.35,
-      "heuristic": 0.20,
-      "behavioral": 0.25,
-      "signature": 0.20
+      "ml": 0.3,
+      "heuristic": 0.2,
+      "behavioral": 0.3,
+      "signature": 0.2
     }
   },
   "monitoring": {
     "enabled": true,
     "paths": [
       "~/Downloads",
-      "~/Desktop", 
+      "~/Desktop",
       "~/Documents"
     ],
-    "extensions": [".exe", ".scr", ".bat", ".cmd", ".com", ".pif"],
+    "extensions": [".exe", ".dll", ".pdf", ".doc", ".docx"],
     "real_time_scan": true,
     "monitor_usb": true,
     "monitor_network": true,
@@ -48,33 +51,21 @@
   },
   "database": {
     "type": "sqlite",
-    "sqlite_path": "~/.prashant918_antivirus/data/antivirus.db",
-    "oracle": {
-      "host": "localhost",
-      "port": 1521,
-      "service_name": "XEPDB1",
-      "username": "antivirus",
-      "password": "",
-      "pool_size": 5,
-      "max_overflow": 10
-    }
+    "sqlite_path": "~/.prashant918_antivirus/data/antivirus.db"
   },
   "cloud": {
     "enabled": true,
-    "virustotal_api_key": "",
-    "malwarebazaar_api_key": "",
-    "hybrid_analysis_api_key": "",
     "update_interval": 3600,
-    "cache_ttl": 86400,
-    "max_file_size": 33554432
+    "cache_ttl": 1800,
+    "max_file_size": 52428800
   },
   "performance": {
     "max_threads": 4,
     "max_processes": 2,
     "cache_size": 1000,
-    "cache_ttl": 3600,
+    "cache_ttl": 300,
     "memory_limit": 536870912,
-    "scan_timeout": 300
+    "scan_timeout": 60
   },
   "quarantine": {
     "directory": "~/.prashant918_antivirus/quarantine",
@@ -85,10 +76,7 @@
   },
   "updates": {
     "auto_update": true,
-    "check_interval": 3600,
-    "signature_sources": [
-      "https://signatures.prashant918.com/latest"
-    ],
+    "check_interval": 86400,
     "backup_before_update": true
   }
 }

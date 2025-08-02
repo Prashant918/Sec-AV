@@ -1,0 +1,5 @@
+Collecting yara-python
+  Using cached yara_python-4.5.4-cp313-cp313-macosx_15_0_x86_64.whl.metadata (2.8 kB)
+Using cached yara_python-4.5.4-cp313-cp313-macosx_15_0_x86_64.whl (209 kB)
+Installing collected packages: yara-python
+Successfully installed yara-python-4.5.4

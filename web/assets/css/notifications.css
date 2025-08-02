@@ -1,0 +1,102 @@
+/* Notification System Styles */
+.notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 15px 20px;
+    border-radius: 8px;
+    color: white;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 10000;
+    max-width: 400px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    animation: slideIn 0.3s ease-out;
+}
+
+.notification-success {
+    background: linear-gradient(135deg, #10b981, #059669);
+}
+
+.notification-error {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+}
+
+.notification-warning {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+
+.notification-info {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+}
+
+.notification button {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    margin-left: 10px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.notification button:hover {
+    opacity: 1;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Log entries styling */
+.log-entry {
+    padding: 8px 12px;
+    margin: 4px 0;
+    border-left: 3px solid;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9rem;
+}
+
+.log-entry.log-info {
+    border-left-color: #3b82f6;
+}
+
+.log-entry.log-warning {
+    border-left-color: #f59e0b;
+}
+
+.log-entry.log-error {
+    border-left-color: #ef4444;
+}
+
+.log-entry.log-debug {
+    border-left-color: #6b7280;
+}
+
+.log-timestamp {
+    color: #9ca3af;
+    margin-right: 10px;
+}
+
+.log-level {
+    font-weight: bold;
+    margin-right: 10px;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+}
+
+.log-message {
+    color: #e5e7eb;
+}

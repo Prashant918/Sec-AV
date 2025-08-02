@@ -1,503 +1,373 @@
 """
-Prashant918 Advanced Antivirus - Exception Classes
-
-Custom exception hierarchy for comprehensive error handling
-and debugging throughout the cybersecurity platform.
+Custom Exception Classes - Comprehensive error handling for the antivirus system
 """
-
-from typing import Optional, Dict, Any, List
 import traceback
-import sys
+from typing import Dict, Any, Optional
 from datetime import datetime
-
 
 class AntivirusError(Exception):
     """Base exception class for all antivirus-related errors"""
-
-    def __init__(
-        self,
-        message: str,
-        error_code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-        cause: Optional[Exception] = None,
-    ):
+    
+    def __init__(self, message: str, error_code: Optional[str] = None, 
+                 details: Optional[Dict[str, Any]] = None, cause: Optional[Exception] = None):
         super().__init__(message)
         self.message = message
         self.error_code = error_code or self.__class__.__name__
         self.details = details or {}
         self.cause = cause
         self.timestamp = datetime.now()
-        self.traceback_info = traceback.format_exc() if sys.exc_info()[0] else None
-
+        self.traceback = traceback.format_exc()
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert exception to dictionary for logging/serialization"""
         return {
-            "error_type": self.__class__.__name__,
-            "error_code": self.error_code,
-            "message": self.message,
-            "details": self.details,
-            "timestamp": self.timestamp.isoformat(),
-            "traceback": self.traceback_info,
-            "cause": str(self.cause) if self.cause else None,
+            'error_type': self.__class__.__name__,
+            'error_code': self.error_code,
+            'message': self.message,
+            'details': self.details,
+            'timestamp': self.timestamp.isoformat(),
+            'traceback': self.traceback,
+            'cause': str(self.cause) if self.cause else None
         }
-
+    
     def __str__(self) -> str:
-        base_msg = f"[{self.error_code}] {self.message}"
-        if self.details:
-            base_msg += f" | Details: {self.details}"
-        return base_msg
+        details_str = f" - Details: {self.details}" if self.details else ""
+        return f"[{self.error_code}] {self.message}{details_str}"
 
-
+# Configuration Errors
 class ConfigurationError(AntivirusError):
-    """Raised when configuration-related errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        config_key: Optional[str] = None,
-        config_value: Optional[Any] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Configuration-related errors"""
+    
+    def __init__(self, message: str, config_key: Optional[str] = None, 
+                 config_value: Optional[Any] = None, **kwargs):
+        details = kwargs.get('details', {})
         if config_key:
-            details["config_key"] = config_key
+            details['config_key'] = config_key
         if config_value is not None:
-            details["config_value"] = str(config_value)
+            details['config_value'] = config_value
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(message, error_code="CONFIG_ERROR", details=details, **kwargs)
-
-
+# Database Errors
 class DatabaseError(AntivirusError):
-    """Raised when database-related errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        query: Optional[str] = None,
-        connection_info: Optional[Dict[str, Any]] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Database operation errors"""
+    
+    def __init__(self, message: str, query: Optional[str] = None, 
+                 connection_info: Optional[Dict] = None, **kwargs):
+        details = kwargs.get('details', {})
         if query:
-            details["query"] = query
+            details['query'] = query
         if connection_info:
-            details["connection_info"] = connection_info
-
-        super().__init__(message, error_code="DB_ERROR", details=details, **kwargs)
-
+            details['connection_info'] = connection_info
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
 class ConnectionError(DatabaseError):
-    """Raised when database connection errors occur"""
-
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, error_code="DB_CONNECTION_ERROR", **kwargs)
-
+    """Database connection errors"""
+    pass
 
 class QueryError(DatabaseError):
-    """Raised when database query errors occur"""
+    """Database query errors"""
+    pass
 
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, error_code="DB_QUERY_ERROR", **kwargs)
-
-
+# Scanning Errors
 class ScanError(AntivirusError):
-    """Raised when file scanning errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        file_path: Optional[str] = None,
-        scan_type: Optional[str] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """File scanning errors"""
+    
+    def __init__(self, message: str, file_path: Optional[str] = None, 
+                 scan_type: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
         if file_path:
-            details["file_path"] = file_path
+            details['file_path'] = file_path
         if scan_type:
-            details["scan_type"] = scan_type
-
-        super().__init__(message, error_code="SCAN_ERROR", details=details, **kwargs)
-
+            details['scan_type'] = scan_type
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
 class FileAccessError(ScanError):
-    """Raised when file access errors occur during scanning"""
-
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, error_code="FILE_ACCESS_ERROR", **kwargs)
-
+    """File access errors during scanning"""
+    pass
 
 class MalwareDetectedError(ScanError):
-    """Raised when malware is detected during scanning"""
-
-    def __init__(
-        self,
-        message: str,
-        threat_name: Optional[str] = None,
-        threat_type: Optional[str] = None,
-        confidence: Optional[float] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Malware detection error"""
+    
+    def __init__(self, message: str, threat_name: Optional[str] = None,
+                 threat_type: Optional[str] = None, confidence: Optional[float] = None, **kwargs):
+        details = kwargs.get('details', {})
         if threat_name:
-            details["threat_name"] = threat_name
+            details['threat_name'] = threat_name
         if threat_type:
-            details["threat_type"] = threat_type
+            details['threat_type'] = threat_type
         if confidence is not None:
-            details["confidence"] = confidence
+            details['confidence'] = confidence
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(
-            message, error_code="MALWARE_DETECTED", details=details, **kwargs
-        )
-
-
+# Quarantine Errors
 class QuarantineError(AntivirusError):
-    """Raised when quarantine-related errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        file_path: Optional[str] = None,
-        quarantine_path: Optional[str] = None,
-        operation: Optional[str] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Quarantine operation errors"""
+    
+    def __init__(self, message: str, file_path: Optional[str] = None,
+                 quarantine_path: Optional[str] = None, operation: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
         if file_path:
-            details["file_path"] = file_path
+            details['file_path'] = file_path
         if quarantine_path:
-            details["quarantine_path"] = quarantine_path
+            details['quarantine_path'] = quarantine_path
         if operation:
-            details["operation"] = operation
-
-        super().__init__(
-            message, error_code="QUARANTINE_ERROR", details=details, **kwargs
-        )
-
+            details['operation'] = operation
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
 class QuarantineAccessError(QuarantineError):
-    """Raised when quarantine access errors occur"""
+    """Quarantine access errors"""
+    pass
 
-    def __init__(self, message: str, **kwargs):
-        super().__init__(message, error_code="QUARANTINE_ACCESS_ERROR", **kwargs)
-
-
+# Encryption Errors
 class EncryptionError(AntivirusError):
-    """Raised when encryption/decryption errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        operation: Optional[str] = None,
-        algorithm: Optional[str] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Encryption/decryption errors"""
+    
+    def __init__(self, message: str, operation: Optional[str] = None,
+                 algorithm: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
         if operation:
-            details["operation"] = operation
+            details['operation'] = operation
         if algorithm:
-            details["algorithm"] = algorithm
+            details['algorithm'] = algorithm
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(
-            message, error_code="ENCRYPTION_ERROR", details=details, **kwargs
-        )
-
-
+# Signature Errors
 class SignatureError(AntivirusError):
-    """Raised when signature-related errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        signature_type: Optional[str] = None,
-        signature_source: Optional[str] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Signature-related errors"""
+    
+    def __init__(self, message: str, signature_type: Optional[str] = None,
+                 signature_source: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
         if signature_type:
-            details["signature_type"] = signature_type
+            details['signature_type'] = signature_type
         if signature_source:
-            details["signature_source"] = signature_source
+            details['signature_source'] = signature_source
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(
-            message, error_code="SIGNATURE_ERROR", details=details, **kwargs
-        )
-
-
+# Update Errors
 class UpdateError(AntivirusError):
-    """Raised when update-related errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        update_source: Optional[str] = None,
-        update_type: Optional[str] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Update-related errors"""
+    
+    def __init__(self, message: str, update_source: Optional[str] = None,
+                 update_type: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
         if update_source:
-            details["update_source"] = update_source
+            details['update_source'] = update_source
         if update_type:
-            details["update_type"] = update_type
+            details['update_type'] = update_type
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(message, error_code="UPDATE_ERROR", details=details, **kwargs)
-
-
+# Network Errors
 class NetworkError(AntivirusError):
-    """Raised when network-related errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        url: Optional[str] = None,
-        status_code: Optional[int] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Network-related errors"""
+    
+    def __init__(self, message: str, url: Optional[str] = None,
+                 status_code: Optional[int] = None, **kwargs):
+        details = kwargs.get('details', {})
         if url:
-            details["url"] = url
+            details['url'] = url
         if status_code:
-            details["status_code"] = status_code
+            details['status_code'] = status_code
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(message, error_code="NETWORK_ERROR", details=details, **kwargs)
-
-
+# Authentication/Authorization Errors
 class AuthenticationError(AntivirusError):
-    """Raised when authentication errors occur"""
-
+    """Authentication errors"""
+    
     def __init__(self, message: str, auth_method: Optional[str] = None, **kwargs):
-        details = kwargs.get("details", {})
+        details = kwargs.get('details', {})
         if auth_method:
-            details["auth_method"] = auth_method
-
-        super().__init__(message, error_code="AUTH_ERROR", details=details, **kwargs)
-
+            details['auth_method'] = auth_method
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
 class AuthorizationError(AntivirusError):
-    """Raised when authorization errors occur"""
-
-    def __init__(
-        self, message: str, required_permission: Optional[str] = None, **kwargs
-    ):
-        details = kwargs.get("details", {})
+    """Authorization errors"""
+    
+    def __init__(self, message: str, required_permission: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
         if required_permission:
-            details["required_permission"] = required_permission
+            details['required_permission'] = required_permission
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(message, error_code="AUTHZ_ERROR", details=details, **kwargs)
-
-
+# Validation Errors
 class ValidationError(AntivirusError):
-    """Raised when validation errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        field_name: Optional[str] = None,
-        field_value: Optional[Any] = None,
-        validation_rules: Optional[List[str]] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Data validation errors"""
+    
+    def __init__(self, message: str, field_name: Optional[str] = None,
+                 field_value: Optional[Any] = None, validation_rules: Optional[Dict] = None, **kwargs):
+        details = kwargs.get('details', {})
         if field_name:
-            details["field_name"] = field_name
+            details['field_name'] = field_name
         if field_value is not None:
-            details["field_value"] = str(field_value)
+            details['field_value'] = field_value
         if validation_rules:
-            details["validation_rules"] = validation_rules
+            details['validation_rules'] = validation_rules
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(
-            message, error_code="VALIDATION_ERROR", details=details, **kwargs
-        )
-
-
+# Resource Errors
 class ResourceError(AntivirusError):
-    """Raised when resource-related errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        resource_type: Optional[str] = None,
-        resource_limit: Optional[Any] = None,
-        current_usage: Optional[Any] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Resource-related errors (memory, disk, etc.)"""
+    
+    def __init__(self, message: str, resource_type: Optional[str] = None,
+                 resource_limit: Optional[Any] = None, current_usage: Optional[Any] = None, **kwargs):
+        details = kwargs.get('details', {})
         if resource_type:
-            details["resource_type"] = resource_type
+            details['resource_type'] = resource_type
         if resource_limit is not None:
-            details["resource_limit"] = str(resource_limit)
+            details['resource_limit'] = resource_limit
         if current_usage is not None:
-            details["current_usage"] = str(current_usage)
-
-        super().__init__(
-            message, error_code="RESOURCE_ERROR", details=details, **kwargs
-        )
-
+            details['current_usage'] = current_usage
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
 class MemoryError(ResourceError):
-    """Raised when memory-related errors occur"""
-
-    def __init__(self, message: str, **kwargs):
-        super().__init__(
-            message, resource_type="memory", error_code="MEMORY_ERROR", **kwargs
-        )
-
+    """Memory-related errors"""
+    pass
 
 class DiskSpaceError(ResourceError):
-    """Raised when disk space errors occur"""
+    """Disk space errors"""
+    pass
 
-    def __init__(self, message: str, **kwargs):
-        super().__init__(
-            message, resource_type="disk_space", error_code="DISK_SPACE_ERROR", **kwargs
-        )
-
-
+# Timeout Errors
 class TimeoutError(AntivirusError):
-    """Raised when timeout errors occur"""
-
-    def __init__(
-        self,
-        message: str,
-        timeout_duration: Optional[float] = None,
-        operation: Optional[str] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Timeout errors"""
+    
+    def __init__(self, message: str, timeout_duration: Optional[float] = None,
+                 operation: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
         if timeout_duration is not None:
-            details["timeout_duration"] = timeout_duration
+            details['timeout_duration'] = timeout_duration
         if operation:
-            details["operation"] = operation
+            details['operation'] = operation
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(message, error_code="TIMEOUT_ERROR", details=details, **kwargs)
+# Service Errors
+class ServiceError(AntivirusError):
+    """Service management errors"""
+    
+    def __init__(self, message: str, service_name: Optional[str] = None,
+                 operation: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
+        if service_name:
+            details['service_name'] = service_name
+        if operation:
+            details['operation'] = operation
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-
+# Critical System Errors
 class CriticalError(AntivirusError):
-    """Raised for critical system errors that require immediate attention"""
-
-    def __init__(
-        self,
-        message: str,
-        system_component: Optional[str] = None,
-        recovery_action: Optional[str] = None,
-        **kwargs,
-    ):
-        details = kwargs.get("details", {})
+    """Critical system errors that require immediate attention"""
+    
+    def __init__(self, message: str, system_component: Optional[str] = None,
+                 recovery_action: Optional[str] = None, **kwargs):
+        details = kwargs.get('details', {})
         if system_component:
-            details["system_component"] = system_component
+            details['system_component'] = system_component
         if recovery_action:
-            details["recovery_action"] = recovery_action
+            details['recovery_action'] = recovery_action
+        kwargs['details'] = details
+        super().__init__(message, **kwargs)
 
-        super().__init__(
-            message, error_code="CRITICAL_ERROR", details=details, **kwargs
-        )
-
-
-# Exception handler utility functions
-def handle_exception(
-    exception: Exception,
-    logger=None,
-    reraise: bool = True,
-    context: Optional[Dict[str, Any]] = None,
-) -> Optional[AntivirusError]:
+# Utility Functions
+def handle_exception(exception: Exception, logger=None, context: Optional[Dict] = None, 
+                    reraise_as: Optional[type] = None) -> Optional[AntivirusError]:
     """
-    Handle exceptions with proper logging and conversion to AntivirusError
-
-    Args:
-        exception: The exception to handle
-        logger: Logger instance for error logging
-        reraise: Whether to reraise the exception
-        context: Additional context information
-
-    Returns:
-        AntivirusError instance if not reraising
+    Handle exceptions with logging and optional re-raising
     """
-    # Convert to AntivirusError if not already
-    if not isinstance(exception, AntivirusError):
-        av_error = AntivirusError(
-            message=str(exception), details=context or {}, cause=exception
-        )
+    if isinstance(exception, AntivirusError):
+        antivirus_error = exception
     else:
-        av_error = exception
-        if context:
-            av_error.details.update(context)
-
-    # Log the error
+        antivirus_error = AntivirusError(
+            message=str(exception),
+            cause=exception,
+            details=context or {}
+        )
+    
     if logger:
-        error_dict = av_error.to_dict()
-        logger.error(f"Exception handled: {error_dict}")
+        logger.error(f"Exception handled: {antivirus_error}", extra=antivirus_error.to_dict())
+    
+    if reraise_as:
+        if issubclass(reraise_as, AntivirusError):
+            raise reraise_as(
+                message=antivirus_error.message,
+                details=antivirus_error.details,
+                cause=antivirus_error.cause
+            )
+        else:
+            raise reraise_as(str(antivirus_error))
+    
+    return antivirus_error
 
-    if reraise:
-        raise av_error
-
-    return av_error
-
-
-def create_error_response(
-    error: AntivirusError, include_traceback: bool = False
-) -> Dict[str, Any]:
+def create_error_response(exception: Exception, include_traceback: bool = False) -> Dict[str, Any]:
     """
-    Create a standardized error response dictionary
-
-    Args:
-        error: The AntivirusError instance
-        include_traceback: Whether to include traceback information
-
-    Returns:
-        Standardized error response dictionary
+    Create standardized error response for APIs
     """
-    response = {
-        "success": False,
-        "error": {
-            "type": error.__class__.__name__,
-            "code": error.error_code,
-            "message": error.message,
-            "timestamp": error.timestamp.isoformat(),
-            "details": error.details,
-        },
-    }
-
-    if include_traceback and error.traceback_info:
-        response["error"]["traceback"] = error.traceback_info
-
-    if error.cause:
-        response["error"]["cause"] = str(error.cause)
-
+    if isinstance(exception, AntivirusError):
+        response = exception.to_dict()
+    else:
+        response = {
+            'error_type': exception.__class__.__name__,
+            'error_code': 'UNKNOWN_ERROR',
+            'message': str(exception),
+            'timestamp': datetime.now().isoformat(),
+            'details': {},
+            'traceback': traceback.format_exc() if include_traceback else None,
+            'cause': None
+        }
+    
+    if not include_traceback:
+        response.pop('traceback', None)
+    
     return response
 
-
-# Exception registry for error code mapping
+# Error code registry for programmatic access
 ERROR_CODE_REGISTRY = {
-    "CONFIG_ERROR": ConfigurationError,
-    "DB_ERROR": DatabaseError,
-    "DB_CONNECTION_ERROR": ConnectionError,
-    "DB_QUERY_ERROR": QueryError,
-    "SCAN_ERROR": ScanError,
-    "FILE_ACCESS_ERROR": FileAccessError,
-    "MALWARE_DETECTED": MalwareDetectedError,
-    "QUARANTINE_ERROR": QuarantineError,
-    "QUARANTINE_ACCESS_ERROR": QuarantineAccessError,
-    "ENCRYPTION_ERROR": EncryptionError,
-    "SIGNATURE_ERROR": SignatureError,
-    "UPDATE_ERROR": UpdateError,
-    "NETWORK_ERROR": NetworkError,
-    "AUTH_ERROR": AuthenticationError,
-    "AUTHZ_ERROR": AuthorizationError,
-    "VALIDATION_ERROR": ValidationError,
-    "RESOURCE_ERROR": ResourceError,
-    "MEMORY_ERROR": MemoryError,
-    "DISK_SPACE_ERROR": DiskSpaceError,
-    "TIMEOUT_ERROR": TimeoutError,
-    "CRITICAL_ERROR": CriticalError,
+    'CONFIGURATION_ERROR': ConfigurationError,
+    'DATABASE_ERROR': DatabaseError,
+    'CONNECTION_ERROR': ConnectionError,
+    'QUERY_ERROR': QueryError,
+    'SCAN_ERROR': ScanError,
+    'FILE_ACCESS_ERROR': FileAccessError,
+    'MALWARE_DETECTED_ERROR': MalwareDetectedError,
+    'QUARANTINE_ERROR': QuarantineError,
+    'QUARANTINE_ACCESS_ERROR': QuarantineAccessError,
+    'ENCRYPTION_ERROR': EncryptionError,
+    'SIGNATURE_ERROR': SignatureError,
+    'UPDATE_ERROR': UpdateError,
+    'NETWORK_ERROR': NetworkError,
+    'AUTHENTICATION_ERROR': AuthenticationError,
+    'AUTHORIZATION_ERROR': AuthorizationError,
+    'VALIDATION_ERROR': ValidationError,
+    'RESOURCE_ERROR': ResourceError,
+    'MEMORY_ERROR': MemoryError,
+    'DISK_SPACE_ERROR': DiskSpaceError,
+    'TIMEOUT_ERROR': TimeoutError,
+    'SERVICE_ERROR': ServiceError,
+    'CRITICAL_ERROR': CriticalError
 }
 
-
-def get_exception_class(error_code: str) -> type:
+def get_exception_class(error_code: str) -> Optional[type]:
     """Get exception class by error code"""
-    return ERROR_CODE_REGISTRY.get(error_code, AntivirusError)
+    return ERROR_CODE_REGISTRY.get(error_code.upper())
 
-
-def create_exception_from_code(
-    error_code: str, message: str, **kwargs
-) -> AntivirusError:
+def create_exception_from_code(error_code: str, message: str, **kwargs) -> AntivirusError:
     """Create exception instance from error code"""
     exception_class = get_exception_class(error_code)
-    return exception_class(message, **kwargs)
+    if exception_class:
+        return exception_class(message, **kwargs)
+    else:
+        return AntivirusError(message, error_code=error_code, **kwargs)

@@ -1,0 +1,16 @@
+Collecting cx_Oracle
+  Downloading cx_Oracle-8.3.0.tar.gz (363 kB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: cx_Oracle
+  Building wheel for cx_Oracle (pyproject.toml): started
+  Building wheel for cx_Oracle (pyproject.toml): finished with status 'done'
+  Created wheel for cx_Oracle: filename=cx_oracle-8.3.0-cp313-cp313-macosx_15_0_x86_64.whl size=185660 sha256=29916a2f9675738795e22708a9a56b95f06d0eb39a41b5496255e84139736cc2
+  Stored in directory: /Users/mr.z/Library/Caches/pip/wheels/51/d5/df/61146784a04f4192f24a4ae0d3795d8016e8bea735f768e2e1
+Successfully built cx_Oracle
+Installing collected packages: cx_Oracle
+Successfully installed cx_Oracle-8.3.0

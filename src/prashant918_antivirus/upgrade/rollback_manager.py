@@ -1,26 +1,35 @@
 """
-Rollback Manager
-Handles rollback operations when updates fail
+Rollback Management System
+Handles rollback operations for failed updates
 """
 
-import json
+import os
 import shutil
-import subprocess
-import sys
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from datetime import datetime
+import json
 import threading
+from pathlib import Path
+from typing import Dict, Any, Optional
+from datetime import datetime
 
-from ..logger import SecureLogger
-from ..config import SecureConfig
-from ..exceptions import AntivirusError
+try:
+    from ..logger import SecureLogger
+except ImportError:
+    import logging
+    SecureLogger = logging.getLogger
 
+try:
+    from ..config import SecureConfig
+except ImportError:
+    SecureConfig = type('Config', (), {'get': lambda self, key, default=None: default})
+
+try:
+    from ..exceptions import AntivirusError
+except ImportError:
+    class AntivirusError(Exception):
+        pass
 
 class RollbackManager:
-    """
-    Manages rollback operations for failed updates
-    """
+    """Manages rollback operations for failed updates"""
     
     def __init__(self):
         self.logger = SecureLogger("RollbackManager")
@@ -35,117 +44,97 @@ class RollbackManager:
         self.max_rollback_attempts = self.config.get('rollback.max_attempts', 3)
         self.rollback_timeout = self.config.get('rollback.timeout', 300)  # 5 minutes
         
-        # State
-        self.rollback_in_progress = False
+        # Thread safety
         self.rollback_lock = threading.Lock()
         
+        # Ensure directories exist
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self.rollback_log.parent.mkdir(parents=True, exist_ok=True)
+    
     def rollback_from_backup(self, backup_path: Path) -> bool:
         """Rollback from a specific backup"""
         with self.rollback_lock:
-            if self.rollback_in_progress:
-                self.logger.warning("Rollback already in progress")
-                return False
-                
-            self.rollback_in_progress = True
-            
-        try:
-            self.logger.info(f"Starting rollback from backup: {backup_path}")
-            
-            # Validate backup
-            if not self._validate_backup(backup_path):
-                raise AntivirusError("Backup validation failed")
-                
-            # Create rollback point
-            rollback_point = self._create_rollback_point()
-            
             try:
-                # Stop services
-                self._stop_services()
+                self.logger.info(f"Starting rollback from backup: {backup_path}")
                 
-                # Restore files
-                if not self._restore_files_from_backup(backup_path):
-                    raise AntivirusError("File restoration failed")
-                    
-                # Restore database
-                if not self._restore_database_from_backup(backup_path):
-                    self.logger.warning("Database restoration failed")
-                    
-                # Restore configuration
-                if not self._restore_configuration_from_backup(backup_path):
-                    self.logger.warning("Configuration restoration failed")
-                    
-                # Start services
-                self._start_services()
+                # Validate backup
+                if not self._validate_backup(backup_path):
+                    raise AntivirusError("Backup validation failed")
                 
-                # Verify rollback
-                if not self._verify_rollback_success(backup_path):
-                    raise AntivirusError("Rollback verification failed")
-                    
-                # Log successful rollback
-                self._log_rollback_success(backup_path)
+                # Create rollback point
+                rollback_point = self._create_rollback_point()
                 
-                self.logger.info("Rollback completed successfully")
-                return True
+                try:
+                    # Stop services
+                    self._stop_services()
+                    
+                    # Restore files
+                    self._restore_files_from_backup(backup_path)
+                    
+                    # Restore database
+                    self._restore_database_from_backup(backup_path)
+                    
+                    # Restore configuration
+                    self._restore_configuration_from_backup(backup_path)
+                    
+                    # Start services
+                    self._start_services()
+                    
+                    # Verify rollback success
+                    if self._verify_rollback_success(backup_path):
+                        self._log_rollback_success(backup_path)
+                        self.logger.info("Rollback completed successfully")
+                        return True
+                    else:
+                        raise AntivirusError("Rollback verification failed")
+                
+                except Exception as e:
+                    self.logger.error(f"Rollback failed, attempting recovery: {e}")
+                    self._recover_from_rollback_point(rollback_point)
+                    raise
                 
             except Exception as e:
-                self.logger.error(f"Rollback failed, attempting recovery: {e}")
-                
-                # Attempt to recover from rollback point
-                if rollback_point and self._recover_from_rollback_point(rollback_point):
-                    self.logger.info("Recovery from rollback point successful")
-                else:
-                    self.logger.critical("Recovery failed - manual intervention required")
-                    
-                raise
-                
-        except Exception as e:
-            self.logger.error(f"Rollback operation failed: {e}")
-            self._log_rollback_failure(backup_path, str(e))
-            return False
-            
-        finally:
-            self.rollback_in_progress = False
-            
+                self._log_rollback_failure(backup_path, str(e))
+                self.logger.error(f"Rollback failed: {e}")
+                return False
+    
     def _validate_backup(self, backup_path: Path) -> bool:
         """Validate backup integrity"""
         try:
             if not backup_path.exists() or not backup_path.is_dir():
-                self.logger.error(f"Backup path invalid: {backup_path}")
+                self.logger.error(f"Backup path does not exist or is not a directory: {backup_path}")
                 return False
-                
-            # Check version info
-            version_info_file = backup_path / "version_info.json"
-            if not version_info_file.exists():
-                self.logger.error("Version info missing from backup")
+            
+            # Check for version info
+            version_file = backup_path / "version_info.json"
+            if not version_file.exists():
+                self.logger.error("Backup missing version_info.json")
                 return False
-                
-            # Validate version info
-            with open(version_info_file, 'r') as f:
+            
+            with open(version_file, 'r') as f:
                 version_info = json.load(f)
-                
-            required_fields = ['version', 'backup_date', 'python_version']
-            for field in required_fields:
-                if field not in version_info:
-                    self.logger.error(f"Missing field in version info: {field}")
-                    return False
-                    
-            # Check essential directories
+                required_fields = ['version', 'backup_date', 'python_version']
+                for field in required_fields:
+                    if field not in version_info:
+                        self.logger.error(f"Missing field in version info: {field}")
+                        return False
+            
+            # Check for essential directories
             essential_dirs = ['src']
             for dir_name in essential_dirs:
-                dir_path = backup_path / dir_name
-                if not dir_path.exists() or not dir_path.is_dir():
-                    self.logger.error(f"Essential directory missing: {dir_name}")
+                if not (backup_path / dir_name).exists():
+                    self.logger.error(f"Backup missing essential directory: {dir_name}")
                     return False
-                    
+            
             self.logger.debug("Backup validation passed")
             return True
             
         except Exception as e:
             self.logger.error(f"Backup validation error: {e}")
             return False
-            
-    def _create_rollback_point(self) -> Optional[Path]:
-        """Create a rollback point before starting rollback"""
+    
+    def _create_rollback_point(self) -> Path:
+        """Create a rollback point before attempting rollback"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             rollback_point = self.backup_dir / f"rollback_point_{timestamp}"
@@ -155,231 +144,218 @@ class RollbackManager:
             src_dir = self.app_root / "src"
             if src_dir.exists():
                 shutil.copytree(src_dir, rollback_point / "src")
-                
-            # Backup configuration
+            
             config_dir = self.app_root / "config"
             if config_dir.exists():
                 shutil.copytree(config_dir, rollback_point / "config")
-                
+            
             # Save rollback info
             rollback_info = {
-                'timestamp': timestamp,
-                'purpose': 'rollback_point',
-                'created_by': 'rollback_manager'
+                "created_at": datetime.now().isoformat(),
+                "purpose": "rollback_point",
+                "app_root": str(self.app_root)
             }
             
             with open(rollback_point / "rollback_info.json", 'w') as f:
                 json.dump(rollback_info, f, indent=2)
-                
-            self.logger.info(f"Rollback point created: {rollback_point}")
+            
+            self.logger.info(f"Created rollback point: {rollback_point}")
             return rollback_point
             
         except Exception as e:
             self.logger.error(f"Failed to create rollback point: {e}")
-            return None
-            
-    def _restore_files_from_backup(self, backup_path: Path) -> bool:
+            raise AntivirusError(f"Rollback point creation failed: {e}")
+    
+    def _restore_files_from_backup(self, backup_path: Path):
         """Restore files from backup"""
         try:
             self.logger.info("Restoring files from backup...")
             
             # Restore source code
-            backup_src = backup_path / "src"
-            current_src = self.app_root / "src"
+            src_backup = backup_path / "src"
+            src_current = self.app_root / "src"
             
-            if backup_src.exists():
-                if current_src.exists():
-                    shutil.rmtree(current_src)
-                shutil.copytree(backup_src, current_src)
-                self.logger.info("Source code restored")
-            else:
-                self.logger.warning("No source code in backup")
-                
+            if src_backup.exists():
+                if src_current.exists():
+                    shutil.rmtree(src_current)
+                shutil.copytree(src_backup, src_current)
+                self.logger.debug("Source code restored")
+            
             # Restore other files
             for item in backup_path.iterdir():
-                if item.name in ['src', 'config', 'data', 'version_info.json']:
-                    continue
+                if item.name not in ['src', 'config', 'data', 'version_info.json']:
+                    target = self.app_root / item.name
+                    if target.exists():
+                        if target.is_dir():
+                            shutil.rmtree(target)
+                        else:
+                            target.unlink()
                     
-                dest = self.app_root / item.name
-                if item.is_file():
-                    shutil.copy2(item, dest)
-                elif item.is_dir():
-                    if dest.exists():
-                        shutil.rmtree(dest)
-                    shutil.copytree(item, dest)
-                    
-            return True
+                    if item.is_dir():
+                        shutil.copytree(item, target)
+                    else:
+                        shutil.copy2(item, target)
+            
+            self.logger.info("Files restored successfully")
             
         except Exception as e:
             self.logger.error(f"File restoration failed: {e}")
-            return False
-            
-    def _restore_database_from_backup(self, backup_path: Path) -> bool:
+            raise AntivirusError(f"File restoration failed: {e}")
+    
+    def _restore_database_from_backup(self, backup_path: Path):
         """Restore database from backup"""
         try:
-            backup_db = backup_path / "data" / "antivirus.db"
-            current_db = self.app_root / "data" / "antivirus.db"
+            db_backup = backup_path / "data" / "antivirus.db"
+            if db_backup.exists():
+                data_dir = Path.home() / ".prashant918_antivirus" / "data"
+                data_dir.mkdir(parents=True, exist_ok=True)
+                
+                db_current = data_dir / "antivirus.db"
+                shutil.copy2(db_backup, db_current)
+                
+                self.logger.debug("Database restored")
             
-            if backup_db.exists():
-                # Create data directory if it doesn't exist
-                current_db.parent.mkdir(parents=True, exist_ok=True)
-                
-                # Copy database file
-                shutil.copy2(backup_db, current_db)
-                self.logger.info("Database restored from backup")
-                return True
-            else:
-                self.logger.warning("No database in backup")
-                return True  # Not critical
-                
         except Exception as e:
-            self.logger.error(f"Database restoration failed: {e}")
-            return False
-            
-    def _restore_configuration_from_backup(self, backup_path: Path) -> bool:
+            self.logger.warning(f"Database restoration failed: {e}")
+    
+    def _restore_configuration_from_backup(self, backup_path: Path):
         """Restore configuration from backup"""
         try:
-            backup_config = backup_path / "config"
-            current_config = self.app_root / "config"
-            
-            if backup_config.exists():
-                if current_config.exists():
-                    shutil.rmtree(current_config)
-                shutil.copytree(backup_config, current_config)
-                self.logger.info("Configuration restored from backup")
-            else:
-                self.logger.warning("No configuration in backup")
+            config_backup = backup_path / "config"
+            if config_backup.exists():
+                config_current = self.app_root / "config"
                 
-            return True
+                if config_current.exists():
+                    shutil.rmtree(config_current)
+                shutil.copytree(config_backup, config_current)
+                
+                self.logger.debug("Configuration restored")
             
         except Exception as e:
-            self.logger.error(f"Configuration restoration failed: {e}")
-            return False
-            
-    def _stop_services(self) -> None:
+            self.logger.warning(f"Configuration restoration failed: {e}")
+    
+    def _stop_services(self):
         """Stop antivirus services"""
         try:
-            self.logger.info("Stopping services for rollback...")
-            # Implementation would stop running services
-            # This is platform-specific
+            self.logger.info("Stopping services...")
+            # Platform-specific service stopping would go here
+            pass
         except Exception as e:
             self.logger.error(f"Failed to stop services: {e}")
-            
-    def _start_services(self) -> None:
+    
+    def _start_services(self):
         """Start antivirus services"""
         try:
-            self.logger.info("Starting services after rollback...")
-            # Implementation would start services
-            # This is platform-specific
+            self.logger.info("Starting services...")
+            # Platform-specific service starting would go here
+            pass
         except Exception as e:
             self.logger.error(f"Failed to start services: {e}")
-            
+    
     def _verify_rollback_success(self, backup_path: Path) -> bool:
-        """Verify that rollback was successful"""
+        """Verify rollback was successful"""
         try:
             # Check version info
-            version_info_file = backup_path / "version_info.json"
-            with open(version_info_file, 'r') as f:
-                backup_version_info = json.load(f)
+            version_file = backup_path / "version_info.json"
+            if version_file.exists():
+                with open(version_file, 'r') as f:
+                    backup_version = json.load(f).get('version')
                 
-            expected_version = backup_version_info.get('version')
+                # Try to import and check version
+                try:
+                    from .. import __version__
+                    if __version__ == backup_version:
+                        self.logger.debug("Version verification passed")
+                        return True
+                except ImportError:
+                    pass
             
-            # Try to import and check version
+            # Basic import test
             try:
-                sys.path.insert(0, str(self.app_root / "src"))
-                import prashant918_antivirus
-                current_version = getattr(prashant918_antivirus, '__version__', None)
-                
-                if current_version != expected_version:
-                    self.logger.error(f"Version mismatch after rollback: {current_version} != {expected_version}")
-                    return False
-                    
-                # Try basic import test
-                from prashant918_antivirus.antivirus.engine import AdvancedThreatDetectionEngine
-                
-                self.logger.info("Rollback verification passed")
+                from ..logger import SecureLogger
+                from ..config import secure_config
+                self.logger.debug("Basic import test passed")
                 return True
-                
             except ImportError as e:
-                self.logger.error(f"Import test failed after rollback: {e}")
+                self.logger.error(f"Import test failed: {e}")
                 return False
-                
+            
         except Exception as e:
             self.logger.error(f"Rollback verification failed: {e}")
             return False
-            
-    def _recover_from_rollback_point(self, rollback_point: Path) -> bool:
-        """Recover from rollback point"""
+    
+    def _recover_from_rollback_point(self, rollback_point: Path):
+        """Recover from failed rollback using rollback point"""
         try:
             self.logger.info(f"Recovering from rollback point: {rollback_point}")
             
+            if not rollback_point.exists():
+                raise AntivirusError("Rollback point does not exist")
+            
             # Restore from rollback point
-            return self._restore_files_from_backup(rollback_point)
+            src_rollback = rollback_point / "src"
+            src_current = self.app_root / "src"
+            
+            if src_rollback.exists():
+                if src_current.exists():
+                    shutil.rmtree(src_current)
+                shutil.copytree(src_rollback, src_current)
+            
+            config_rollback = rollback_point / "config"
+            config_current = self.app_root / "config"
+            
+            if config_rollback.exists():
+                if config_current.exists():
+                    shutil.rmtree(config_current)
+                shutil.copytree(config_rollback, config_current)
+            
+            self.logger.info("Recovery from rollback point completed")
             
         except Exception as e:
-            self.logger.error(f"Recovery from rollback point failed: {e}")
-            return False
-            
-    def _log_rollback_success(self, backup_path: Path) -> None:
+            self.logger.critical(f"Recovery from rollback point failed: {e}")
+            raise AntivirusError(f"Recovery failed: {e}")
+    
+    def _log_rollback_success(self, backup_path: Path):
         """Log successful rollback"""
-        try:
-            log_entry = {
-                'timestamp': datetime.now().isoformat(),
-                'status': 'success',
-                'backup_path': str(backup_path),
-                'message': 'Rollback completed successfully'
-            }
-            
-            self._write_rollback_log(log_entry)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to log rollback success: {e}")
-            
-    def _log_rollback_failure(self, backup_path: Path, error_message: str) -> None:
-        """Log rollback failure"""
-        try:
-            log_entry = {
-                'timestamp': datetime.now().isoformat(),
-                'status': 'failure',
-                'backup_path': str(backup_path),
-                'error_message': error_message
-            }
-            
-            self._write_rollback_log(log_entry)
-            
-        except Exception as e:
-            self.logger.error(f"Failed to log rollback failure: {e}")
-            
-    def _write_rollback_log(self, log_entry: Dict) -> None:
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "status": "success",
+            "backup_path": str(backup_path),
+            "message": "Rollback completed successfully"
+        }
+        self._write_rollback_log(log_entry)
+    
+    def _log_rollback_failure(self, backup_path: Path, error_message: str):
+        """Log failed rollback"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "status": "failure",
+            "backup_path": str(backup_path),
+            "error": error_message
+        }
+        self._write_rollback_log(log_entry)
+    
+    def _write_rollback_log(self, log_entry: Dict[str, Any]):
         """Write entry to rollback log"""
         try:
-            # Ensure log directory exists
-            self.rollback_log.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Append to log file
             with open(self.rollback_log, 'a') as f:
                 f.write(json.dumps(log_entry) + '\n')
-                
         except Exception as e:
             self.logger.error(f"Failed to write rollback log: {e}")
-            
-    def get_rollback_history(self) -> List[Dict]:
+    
+    def get_rollback_history(self) -> list:
         """Get rollback history"""
         try:
-            if not self.rollback_log.exists():
-                return []
-                
             history = []
-            with open(self.rollback_log, 'r') as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line.strip())
-                        history.append(entry)
-                    except json.JSONDecodeError:
-                        continue
-                        
+            if self.rollback_log.exists():
+                with open(self.rollback_log, 'r') as f:
+                    for line in f:
+                        try:
+                            entry = json.loads(line.strip())
+                            history.append(entry)
+                        except json.JSONDecodeError:
+                            continue
             return history
-            
         except Exception as e:
-            self.logger.error(f"Failed to read rollback history: {e}")
+            self.logger.error(f"Failed to get rollback history: {e}")
             return []

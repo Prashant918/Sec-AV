@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prashant918 Advanced Antivirus - Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-shield-alt"></i>
+                    <h2>Prashant918 AV</h2>
+                </div>
+            </div>
+            
+            <ul class="nav-menu">
+                <li class="nav-item active">
+                    <a href="/" class="nav-link">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/scan" class="nav-link">
+                        <i class="fas fa-search"></i>
+                        <span>Scan</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/quarantine" class="nav-link">
+                        <i class="fas fa-lock"></i>
+                        <span>Quarantine</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/logs" class="nav-link">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Logs</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/settings" class="nav-link">
+                        <i class="fas fa-cog"></i>
+                        <span>Settings</span>
+                    </a>
+                </li>
+            </ul>
+            
+            <div class="sidebar-footer">
+                <div class="system-status">
+                    <div class="status-indicator" id="systemStatus">
+                        <i class="fas fa-circle"></i>
+                        <span>System Active</span>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-left">
+                    <h1>Security Dashboard</h1>
+                    <p>Real-time protection and monitoring</p>
+                </div>
+                <div class="header-right">
+                    <div class="header-stats">
+                        <div class="stat-item">
+                            <i class="fas fa-clock"></i>
+                            <span id="currentTime"></span>
+                        </div>
+                        <div class="stat-item">
+                            <i class="fas fa-server"></i>
+                            <span id="systemUptime">System Online</span>
+                        </div>
+                    </div>
+                    <button class="theme-toggle" id="themeToggle">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Dashboard Content -->
+            <div class="dashboard-content">
+                <!-- Status Cards -->
+                <div class="status-cards">
+                    <div class="status-card protection-card">
+                        <div class="card-icon">
+                            <i class="fas fa-shield-alt"></i>
+                        </div>
+                        <div class="card-content">
+                            <h3>Real-time Protection</h3>
+                            <div class="protection-status" id="protectionStatus">
+                                <span class="status-text">Active</span>
+                                <div class="status-toggle">
+                                    <input type="checkbox" id="protectionToggle" checked>
+                                    <label for="protectionToggle"></label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="status-card scan-card">
+                        <div class="card-icon">
+                            <i class="fas fa-search"></i>
+                        </div>
+                        <div class="card-content">
+                            <h3>Files Scanned</h3>
+                            <div class="stat-number" data-target="{{ system_stats.files_scanned }}">0</div>
+                            <div class="stat-change">+12% from yesterday</div>
+                        </div>
+                    </div>
+
+                    <div class="status-card threat-card">
+                        <div class="card-icon">
+                            <i class="fas fa-exclamation-triangle"></i>
+                        </div>
+                        <div class="card-content">
+                            <h3>Threats Detected</h3>
+                            <div class="stat-number threat-count" data-target="{{ system_stats.threats_detected }}">0</div>
+                            <div class="stat-change">Last 24 hours</div>
+                        </div>
+                    </div>
+
+                    <div class="status-card quarantine-card">
+                        <div class="card-icon">
+                            <i class="fas fa-lock"></i>
+                        </div>
+                        <div class="card-content">
+                            <h3>Quarantined</h3>
+                            <div class="stat-number" data-target="{{ system_stats.quarantined_files }}">0</div>
+                            <div class="stat-change">Files secured</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Dashboard Grid -->
+                <div class="dashboard-grid">
+                    <!-- Real-time Monitoring -->
+                    <div class="dashboard-widget monitoring-widget">
+                        <div class="widget-header">
+                            <h3><i class="fas fa-eye"></i> Real-time Monitoring</h3>
+                            <div class="widget-controls">
+                                <button class="btn btn-sm" id="startMonitoring">
+                                    <i class="fas fa-play"></i> Start
+                                </button>
+                                <button class="btn btn-sm btn-danger" id="stopMonitoring">
+                                    <i class="fas fa-stop"></i> Stop
+                                </button>
+                            </div>
+                        </div>
+                        <div class="widget-content">
+                            <div class="monitoring-status" id="monitoringStatus">
+                                <div class="status-indicator">
+                                    <i class="fas fa-circle"></i>
+                                    <span>Monitoring Active</span>
+                                </div>
+                                <div class="monitored-paths">
+                                    <h4>Monitored Locations:</h4>
+                                    <ul id="monitoredPaths">
+                                        <li><i class="fas fa-folder"></i> Downloads</li>
+                                        <li><i class="fas fa-folder"></i> Desktop</li>
+                                        <li><i class="fas fa-folder"></i> Documents</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Threats -->
+                    <div class="dashboard-widget threats-widget">
+                        <div class="widget-header">
+                            <h3><i class="fas fa-virus"></i> Recent Threats</h3>
+                            <button class="btn btn-sm" id="refreshThreats">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                        <div class="widget-content">
+                            <div class="threats-list" id="threatsList">
+                                <div class="no-threats">
+                                    <i class="fas fa-check-circle"></i>
+                                    <p>No threats detected recently</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- System Performance -->
+                    <div class="dashboard-widget performance-widget">
+                        <div class="widget-header">
+                            <h3><i class="fas fa-chart-line"></i> System Performance</h3>
+                        </div>
+                        <div class="widget-content">
+                            <div class="performance-metrics">
+                                <div class="metric">
+                                    <div class="metric-label">CPU Usage</div>
+                                    <div class="metric-bar">
+                                        <div class="metric-fill" style="width: 25%"></div>
+                                    </div>
+                                    <div class="metric-value">25%</div>
+                                </div>
+                                <div class="metric">
+                                    <div class="metric-label">Memory Usage</div>
+                                    <div class="metric-bar">
+                                        <div class="metric-fill" style="width: 45%"></div>
+                                    </div>
+                                    <div class="metric-value">45%</div>
+                                </div>
+                                <div class="metric">
+                                    <div class="metric-label">Disk Usage</div>
+                                    <div class="metric-bar">
+                                        <div class="metric-fill" style="width: 60%"></div>
+                                    </div>
+                                    <div class="metric-value">60%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Actions -->
+                    <div class="dashboard-widget actions-widget">
+                        <div class="widget-header">
+                            <h3><i class="fas fa-bolt"></i> Quick Actions</h3>
+                        </div>
+                        <div class="widget-content">
+                            <div class="quick-actions">
+                                <button class="action-btn" id="quickScan">
+                                    <i class="fas fa-search"></i>
+                                    <span>Quick Scan</span>
+                                </button>
+                                <button class="action-btn" id="fullScan">
+                                    <i class="fas fa-search-plus"></i>
+                                    <span>Full Scan</span>
+                                </button>
+                                <button class="action-btn" id="updateSignatures">
+                                    <i class="fas fa-download"></i>
+                                    <span>Update Signatures</span>
+                                </button>
+                                <button class="action-btn" id="viewQuarantine">
+                                    <i class="fas fa-lock"></i>
+                                    <span>View Quarantine</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Activity Chart -->
+                    <div class="dashboard-widget chart-widget">
+                        <div class="widget-header">
+                            <h3><i class="fas fa-chart-area"></i> Activity Overview</h3>
+                            <select id="chartPeriod" class="chart-period">
+                                <option value="24h">Last 24 Hours</option>
+                                <option value="7d">Last 7 Days</option>
+                                <option value="30d">Last 30 Days</option>
+                            </select>
+                        </div>
+                        <div class="widget-content">
+                            <canvas id="activityChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Component Status -->
+                    <div class="dashboard-widget components-widget">
+                        <div class="widget-header">
+                            <h3><i class="fas fa-cogs"></i> Component Status</h3>
+                        </div>
+                        <div class="widget-content">
+                            <div class="components-list" id="componentsList">
+                                {% for component, status in components_status.items() %}
+                                <div class="component-item">
+                                    <div class="component-info">
+                                        <i class="fas fa-{{ 'check-circle' if status else 'times-circle' }}"></i>
+                                        <span>{{ component.replace('_', ' ').title() }}</span>
+                                    </div>
+                                    <div class="component-status {{ 'active' if status else 'inactive' }}">
+                                        {{ 'Active' if status else 'Inactive' }}
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Notification Container -->
+    <div class="notification-container" id="notificationContainer"></div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>Processing...</p>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

@@ -1,337 +1,278 @@
 """
-Prashant918 Advanced Antivirus - Web API Interface
-
-RESTful API for remote management and integration with other systems.
+Prashant918 Advanced Antivirus - Web API
+RESTful API for remote management and monitoring
 """
 
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-import jwt
-from functools import wraps
 import os
-import tempfile
+import sys
+import json
+import time
 from typing import Dict, Any, Optional
+from pathlib import Path
 
-from ..core.engine import AdvancedThreatDetectionEngine
-from ..core.quarantine import QuarantineManager
-from ..core.signatures import AdvancedSignatureManager
-from ..logger import SecureLogger
-from ..config import secure_config
-from ..exceptions import AntivirusError, handle_exception
+# Flask imports with error handling
+try:
+    from flask import Flask, request, jsonify, send_from_directory
+    from flask_cors import CORS
+    from werkzeug.security import check_password_hash, generate_password_hash
+    HAS_FLASK = True
+except ImportError:
+    HAS_FLASK = False
+    Flask = None
+    CORS = None
 
-# Initialize Flask app
-app = Flask(__name__)
-app.config["SECRET_KEY"] = secure_config.get(
-    "api.secret_key", "change-this-in-production"
-)
-app.config["MAX_CONTENT_LENGTH"] = secure_config.get(
-    "api.max_file_size", 100 * 1024 * 1024
-)  # 100MB
+# Core imports with error handling
+try:
+    from ..logger import SecureLogger
+except ImportError:
+    import logging
+    SecureLogger = logging.getLogger
 
-# Enable CORS
-CORS(app)
+try:
+    from ..config import secure_config
+except ImportError:
+    secure_config = type('Config', (), {'get': lambda self, key, default=None: default})()
 
-# Rate limiting
-limiter = Limiter(app, key_func=get_remote_address, default_limits=["1000 per hour"])
+try:
+    from ..exceptions import AntivirusError
+except ImportError:
+    class AntivirusError(Exception):
+        pass
 
-# Initialize components
-logger = SecureLogger("WebAPI")
-threat_engine = AdvancedThreatDetectionEngine()
-quarantine_manager = QuarantineManager()
-signature_manager = AdvancedSignatureManager()
-
-
-def require_auth(f):
-    """Authentication decorator"""
-
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = request.headers.get("Authorization")
-
-        if not token:
-            return jsonify({"error": "No token provided"}), 401
-
+class APIManager:
+    """API management class"""
+    
+    def __init__(self):
+        self.logger = SecureLogger("API")
+        self.threat_engine = None
+        self.quarantine_manager = None
+        self.service_manager = None
+        self._initialize_components()
+    
+    def _initialize_components(self):
+        """Initialize API components"""
         try:
-            if token.startswith("Bearer "):
-                token = token[7:]
-
-            payload = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
-
-            request.user = payload
-
-        except jwt.ExpiredSignatureError:
-            return jsonify({"error": "Token expired"}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({"error": "Invalid token"}), 401
-
-        return f(*args, **kwargs)
-
-    return decorated
-
-
-@app.route("/api/v1/health", methods=["GET"])
-def health_check():
-    """Health check endpoint"""
-    try:
-        status = threat_engine.get_engine_status()
-        return jsonify(
-            {
-                "status": "healthy",
-                "timestamp": datetime.now().isoformat(),
-                "engine_status": status,
-            }
-        )
-    except Exception as e:
-        return jsonify({"status": "unhealthy", "error": str(e)}), 500
-
-
-@app.route("/api/v1/auth/login", methods=["POST"])
-@limiter.limit("5 per minute")
-def login():
-    """Authentication endpoint"""
-    try:
-        data = request.get_json()
-        username = data.get("username")
-        password = data.get("password")
-
-        # Simple authentication (implement proper auth in production)
-        if username == "admin" and password == secure_config.get(
-            "api.admin_password", "admin"
-        ):
-            token = jwt.encode(
-                {"username": username, "exp": datetime.utcnow() + timedelta(hours=24)},
-                app.config["SECRET_KEY"],
-                algorithm="HS256",
-            )
-
-            return jsonify({"token": token, "expires_in": 86400})  # 24 hours
-        else:
-            return jsonify({"error": "Invalid credentials"}), 401
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/scan/file", methods=["POST"])
-@require_auth
-@limiter.limit("10 per minute")
-def scan_file():
-    """Scan uploaded file"""
-    try:
-        if "file" not in request.files:
-            return jsonify({"error": "No file provided"}), 400
-
-        file = request.files["file"]
-        if file.filename == "":
-            return jsonify({"error": "No file selected"}), 400
-
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            file.save(temp_file.name)
-            temp_path = temp_file.name
-
+            from ..antivirus.engine import AdvancedThreatDetectionEngine
+            self.threat_engine = AdvancedThreatDetectionEngine()
+        except ImportError:
+            self.logger.warning("Threat engine not available for API")
+        
         try:
-            # Scan the file
-            scan_result = threat_engine.scan_file(temp_path)
+            from ..core.quarantine import QuarantineManager
+            self.quarantine_manager = QuarantineManager()
+        except ImportError:
+            self.logger.warning("Quarantine manager not available for API")
+        
+        try:
+            from ..service.service_manager import create_service_manager
+            self.service_manager = create_service_manager()
+        except ImportError:
+            self.logger.warning("Service manager not available for API")
 
-            # Add original filename to result
-            scan_result["original_filename"] = file.filename
-
-            return jsonify({"success": True, "result": scan_result})
-
-        finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
-
-    except Exception as e:
-        logger.error(f"File scan API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/scan/path", methods=["POST"])
-@require_auth
-def scan_path():
-    """Scan file by path"""
-    try:
-        data = request.get_json()
-        file_path = data.get("path")
-
-        if not file_path:
-            return jsonify({"error": "No path provided"}), 400
-
-        if not os.path.exists(file_path):
-            return jsonify({"error": "File not found"}), 404
-
-        # Scan the file
-        scan_result = threat_engine.scan_file(file_path)
-
-        return jsonify({"success": True, "result": scan_result})
-
-    except Exception as e:
-        logger.error(f"Path scan API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/quarantine", methods=["GET"])
-@require_auth
-def list_quarantine():
-    """List quarantined files"""
-    try:
-        status = request.args.get("status", "QUARANTINED")
-        items = quarantine_manager.list_quarantined_items(status)
-
-        return jsonify({"success": True, "items": items, "count": len(items)})
-
-    except Exception as e:
-        logger.error(f"Quarantine list API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/quarantine/<quarantine_id>/restore", methods=["POST"])
-@require_auth
-def restore_quarantine(quarantine_id):
-    """Restore file from quarantine"""
-    try:
-        data = request.get_json() or {}
-        restore_path = data.get("restore_path")
-
-        result = quarantine_manager.restore_file(quarantine_id, restore_path)
-
-        if result["success"]:
-            return jsonify(
-                {
-                    "success": True,
-                    "message": "File restored successfully",
-                    "restore_path": result["restore_path"],
+def create_app(config=None):
+    """Create Flask application"""
+    if not HAS_FLASK:
+        raise ImportError("Flask dependencies not available. Install with: pip install Flask Flask-CORS")
+    
+    app = Flask(__name__)
+    
+    # Configure CORS
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": ["http://localhost:*", "http://127.0.0.1:*"],
+            "methods": ["GET", "POST", "PUT", "DELETE"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        }
+    })
+    
+    # Configuration
+    app.config.update({
+        'SECRET_KEY': secure_config.get('api.secret_key', 'dev-secret-key'),
+        'DEBUG': secure_config.get('api.debug', False),
+        'HOST': secure_config.get('api.host', '127.0.0.1'),
+        'PORT': secure_config.get('api.port', 5000)
+    })
+    
+    # Initialize API manager
+    api_manager = APIManager()
+    
+    # API Routes
+    @app.route('/api/v1/status', methods=['GET'])
+    def get_status():
+        """Get system status"""
+        try:
+            status = {
+                'status': 'running',
+                'version': '1.0.2',
+                'timestamp': time.time(),
+                'components': {
+                    'threat_engine': api_manager.threat_engine is not None,
+                    'quarantine_manager': api_manager.quarantine_manager is not None,
+                    'service_manager': api_manager.service_manager is not None
                 }
-            )
-        else:
-            return jsonify({"success": False, "error": result["error"]}), 400
-
-    except Exception as e:
-        logger.error(f"Quarantine restore API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/quarantine/<quarantine_id>", methods=["DELETE"])
-@require_auth
-def delete_quarantine(quarantine_id):
-    """Delete quarantined file"""
-    try:
-        result = quarantine_manager.delete_quarantined_file(quarantine_id)
-
-        if result["success"]:
-            return jsonify({"success": True, "message": "File deleted successfully"})
-        else:
-            return jsonify({"success": False, "error": result["error"]}), 400
-
-    except Exception as e:
-        logger.error(f"Quarantine delete API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/signatures/update", methods=["POST"])
-@require_auth
-def update_signatures():
-    """Update threat signatures"""
-    try:
-        success = signature_manager.update_from_cloud()
-
-        if success:
-            stats = signature_manager.get_signature_stats()
-            return jsonify(
-                {
-                    "success": True,
-                    "message": "Signatures updated successfully",
-                    "stats": stats,
-                }
-            )
-        else:
-            return jsonify({"success": False, "error": "Signature update failed"}), 500
-
-    except Exception as e:
-        logger.error(f"Signature update API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/signatures/stats", methods=["GET"])
-@require_auth
-def signature_stats():
-    """Get signature statistics"""
-    try:
-        stats = signature_manager.get_signature_stats()
-        return jsonify({"success": True, "stats": stats})
-
-    except Exception as e:
-        logger.error(f"Signature stats API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/system/status", methods=["GET"])
-@require_auth
-def system_status():
-    """Get system status"""
-    try:
-        from ..utils import get_system_info
-
-        system_info = get_system_info()
-        engine_status = threat_engine.get_engine_status()
-        quarantine_stats = quarantine_manager.get_quarantine_stats()
-
-        return jsonify(
-            {
-                "success": True,
-                "system_info": system_info,
-                "engine_status": engine_status,
-                "quarantine_stats": quarantine_stats,
             }
-        )
+            return jsonify(status)
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/api/v1/scan', methods=['POST'])
+    def scan_file():
+        """Scan a file"""
+        try:
+            if not api_manager.threat_engine:
+                return jsonify({'error': 'Threat engine not available'}), 503
+            
+            data = request.get_json()
+            if not data or 'file_path' not in data:
+                return jsonify({'error': 'file_path required'}), 400
+            
+            file_path = data['file_path']
+            if not os.path.exists(file_path):
+                return jsonify({'error': 'File not found'}), 404
+            
+            result = api_manager.threat_engine.scan_file(file_path)
+            
+            return jsonify({
+                'file_path': result.file_path,
+                'threat_level': result.threat_level.value if hasattr(result.threat_level, 'value') else str(result.threat_level),
+                'confidence': result.confidence,
+                'detection_method': result.detection_method,
+                'scan_time': result.scan_time
+            })
+            
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/api/v1/quarantine', methods=['GET'])
+    def list_quarantine():
+        """List quarantined items"""
+        try:
+            if not api_manager.quarantine_manager:
+                return jsonify({'error': 'Quarantine manager not available'}), 503
+            
+            items = api_manager.quarantine_manager.list_quarantined_items()
+            return jsonify({'items': items})
+            
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/api/v1/service/status', methods=['GET'])
+    def service_status():
+        """Get service status"""
+        try:
+            if not api_manager.service_manager:
+                return jsonify({'error': 'Service manager not available'}), 503
+            
+            status = api_manager.service_manager.get_service_status()
+            return jsonify(status)
+            
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/api/v1/info', methods=['GET'])
+    def system_info():
+        """Get system information"""
+        try:
+            import platform
+            import psutil
+            
+            info = {
+                'system': {
+                    'platform': platform.system(),
+                    'release': platform.release(),
+                    'version': platform.version(),
+                    'machine': platform.machine(),
+                    'processor': platform.processor(),
+                    'python_version': platform.python_version()
+                },
+                'resources': {
+                    'cpu_count': psutil.cpu_count(),
+                    'memory_total': psutil.virtual_memory().total,
+                    'memory_available': psutil.virtual_memory().available,
+                    'disk_usage': psutil.disk_usage('/').percent if os.name != 'nt' else psutil.disk_usage('C:').percent
+                },
+                'antivirus': {
+                    'version': '1.0.2',
+                    'components': {
+                        'threat_engine': api_manager.threat_engine is not None,
+                        'quarantine_manager': api_manager.quarantine_manager is not None,
+                        'service_manager': api_manager.service_manager is not None
+                    }
+                }
+            }
+            
+            return jsonify(info)
+            
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    # Serve static files
+    @app.route('/')
+    def index():
+        """Serve main page"""
+        try:
+            web_dir = Path(__file__).parent.parent.parent.parent / "web"
+            if web_dir.exists():
+                return send_from_directory(str(web_dir), 'index.html')
+            else:
+                return jsonify({
+                    'message': 'Prashant918 Advanced Antivirus API',
+                    'version': '1.0.2',
+                    'endpoints': [
+                        '/api/v1/status',
+                        '/api/v1/scan',
+                        '/api/v1/quarantine',
+                        '/api/v1/service/status',
+                        '/api/v1/info'
+                    ]
+                })
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/<path:filename>')
+    def static_files(filename):
+        """Serve static files"""
+        try:
+            web_dir = Path(__file__).parent.parent.parent.parent / "web"
+            if web_dir.exists():
+                return send_from_directory(str(web_dir), filename)
+            else:
+                return jsonify({'error': 'File not found'}), 404
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    # Error handlers
+    @app.errorhandler(404)
+    def not_found(error):
+        return jsonify({'error': 'Not found'}), 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        return jsonify({'error': 'Internal server error'}), 500
+    
+    return app
 
-    except Exception as e:
-        logger.error(f"System status API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/v1/threats/statistics", methods=["GET"])
-@require_auth
-def threat_statistics():
-    """Get threat detection statistics"""
-    try:
-        stats = signature_manager.get_threat_statistics()
-        return jsonify({"success": True, "statistics": stats})
-
-    except Exception as e:
-        logger.error(f"Threat statistics API error: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.errorhandler(413)
-def file_too_large(e):
-    """Handle file too large error"""
-    return (
-        jsonify(
-            {"error": "File too large", "max_size": app.config["MAX_CONTENT_LENGTH"]}
-        ),
-        413,
-    )
-
-
-@app.errorhandler(429)
-def rate_limit_exceeded(e):
-    """Handle rate limit exceeded"""
-    return jsonify({"error": "Rate limit exceeded", "retry_after": e.retry_after}), 429
-
-
-def run_api_server(host="127.0.0.1", port=5000, debug=False):
+def main():
     """Run the API server"""
-    logger.info(f"Starting API server on {host}:{port}")
-    app.run(host=host, port=port, debug=debug)
+    try:
+        app = create_app()
+        host = app.config.get('HOST', '127.0.0.1')
+        port = app.config.get('PORT', 5000)
+        debug = app.config.get('DEBUG', False)
+        
+        print(f"Starting Prashant918 Advanced Antivirus API server...")
+        print(f"Server running at: http://{host}:{port}")
+        print("Press Ctrl+C to stop")
+        
+        app.run(host=host, port=port, debug=debug)
+        
+    except ImportError as e:
+        print(f"Error: {e}")
+        print("Install Flask dependencies: pip install Flask Flask-CORS")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Failed to start API server: {e}")
+        sys.exit(1)
 
-
-if __name__ == "__main__":
-    run_api_server()
+if __name__ == '__main__':
+    main()

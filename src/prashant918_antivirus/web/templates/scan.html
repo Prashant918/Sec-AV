@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prashant918 Advanced Antivirus - Scan</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/scan.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-shield-alt"></i>
+                    <h2>Prashant918 AV</h2>
+                </div>
+            </div>
+            
+            <ul class="nav-menu">
+                <li class="nav-item">
+                    <a href="/" class="nav-link">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="nav-item active">
+                    <a href="/scan" class="nav-link">
+                        <i class="fas fa-search"></i>
+                        <span>Scan</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/quarantine" class="nav-link">
+                        <i class="fas fa-lock"></i>
+                        <span>Quarantine</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/logs" class="nav-link">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Logs</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/settings" class="nav-link">
+                        <i class="fas fa-cog"></i>
+                        <span>Settings</span>
+                    </a>
+                </li>
+            </ul>
+            
+            <div class="sidebar-footer">
+                <div class="system-status">
+                    <div class="status-indicator" id="systemStatus">
+                        <i class="fas fa-circle"></i>
+                        <span>System Active</span>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-left">
+                    <h1>File & System Scanner</h1>
+                    <p>Comprehensive threat detection and analysis</p>
+                </div>
+                <div class="header-right">
+                    <div class="scan-status" id="scanStatus">
+                        <i class="fas fa-check-circle"></i>
+                        <span>Ready to Scan</span>
+                    </div>
+                    <button class="theme-toggle" id="themeToggle">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Scan Content -->
+            <div class="scan-content">
+                <!-- Scan Options -->
+                <div class="scan-options-section">
+                    <div class="scan-types">
+                        <div class="scan-type-card" data-type="quick">
+                            <div class="scan-type-icon">
+                                <i class="fas fa-bolt"></i>
+                            </div>
+                            <div class="scan-type-info">
+                                <h3>Quick Scan</h3>
+                                <p>Scan common locations and running processes</p>
+                                <div class="scan-details">
+                                    <span><i class="fas fa-clock"></i> ~2-5 minutes</span>
+                                    <span><i class="fas fa-folder"></i> Downloads, Desktop, Documents</span>
+                                </div>
+                            </div>
+                            <button class="scan-btn" id="quickScanBtn">
+                                <i class="fas fa-play"></i>
+                                Start Quick Scan
+                            </button>
+                        </div>
+
+                        <div class="scan-type-card" data-type="full">
+                            <div class="scan-type-icon">
+                                <i class="fas fa-search-plus"></i>
+                            </div>
+                            <div class="scan-type-info">
+                                <h3>Full System Scan</h3>
+                                <p>Complete system scan including all drives</p>
+                                <div class="scan-details">
+                                    <span><i class="fas fa-clock"></i> ~30-60 minutes</span>
+                                    <span><i class="fas fa-hdd"></i> All system drives</span>
+                                </div>
+                            </div>
+                            <button class="scan-btn" id="fullScanBtn">
+                                <i class="fas fa-play"></i>
+                                Start Full Scan
+                            </button>
+                        </div>
+
+                        <div class="scan-type-card" data-type="custom">
+                            <div class="scan-type-icon">
+                                <i class="fas fa-cog"></i>
+                            </div>
+                            <div class="scan-type-info">
+                                <h3>Custom Scan</h3>
+                                <p>Choose specific files or folders to scan</p>
+                                <div class="scan-details">
+                                    <span><i class="fas fa-clock"></i> Variable</span>
+                                    <span><i class="fas fa-folder-open"></i> User selected</span>
+                                </div>
+                            </div>
+                            <button class="scan-btn" id="customScanBtn">
+                                <i class="fas fa-play"></i>
+                                Configure & Scan
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Custom Scan Configuration -->
+                <div class="custom-scan-config" id="customScanConfig" style="display: none;">
+                    <div class="config-header">
+                        <h3><i class="fas fa-cog"></i> Custom Scan Configuration</h3>
+                        <button class="close-config" id="closeConfig">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="config-content">
+                        <div class="config-section">
+                            <h4>Scan Targets</h4>
+                            <div class="target-selection">
+                                <div class="target-input">
+                                    <input type="text" id="scanPath" placeholder="Enter file or folder path">
+                                    <button class="browse-btn" id="browseBtn">
+                                        <i class="fas fa-folder-open"></i>
+                                        Browse
+                                    </button>
+                                </div>
+                                <div class="target-list" id="targetList">
+                                    <!-- Selected targets will appear here -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="config-section">
+                            <h4>Scan Options</h4>
+                            <div class="scan-options">
+                                <label class="option-item">
+                                    <input type="checkbox" id="recursiveScan" checked>
+                                    <span class="checkmark"></span>
+                                    <div class="option-info">
+                                        <span class="option-title">Recursive Scan</span>
+                                        <span class="option-desc">Scan subdirectories</span>
+                                    </div>
+                                </label>
+                                
+                                <label class="option-item">
+                                    <input type="checkbox" id="quarantineThreats" checked>
+                                    <span class="checkmark"></span>
+                                    <div class="option-info">
+                                        <span class="option-title">Auto Quarantine</span>
+                                        <span class="option-desc">Automatically quarantine detected threats</span>
+                                    </div>
+                                </label>
+                                
+                                <label class="option-item">
+                                    <input type="checkbox" id="deepScan">
+                                    <span class="checkmark"></span>
+                                    <div class="option-info">
+                                        <span class="option-title">Deep Analysis</span>
+                                        <span class="option-desc">Enhanced detection using ML models</span>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="config-actions">
+                            <button class="btn btn-primary" id="startCustomScan">
+                                <i class="fas fa-play"></i>
+                                Start Custom Scan
+                            </button>
+                            <button class="btn btn-secondary" id="cancelCustomScan">
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scan Progress -->
+                <div class="scan-progress-section" id="scanProgressSection" style="display: none;">
+                    <div class="progress-header">
+                        <h3 id="scanProgressTitle">Scanning in Progress...</h3>
+                        <div class="progress-controls">
+                            <button class="btn btn-danger" id="stopScanBtn">
+                                <i class="fas fa-stop"></i>
+                                Stop Scan
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="progress-content">
+                        <div class="progress-stats">
+                            <div class="stat-item">
+                                <span class="stat-label">Files Scanned:</span>
+                                <span class="stat-value" id="filesScanned">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Threats Found:</span>
+                                <span class="stat-value threat-count" id="threatsFound">0</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Current File:</span>
+                                <span class="stat-value current-file" id="currentFile">-</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Elapsed Time:</span>
+                                <span class="stat-value" id="elapsedTime">00:00</span>
+                            </div>
+                        </div>
+                        
+                        <div class="progress-bar-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill"></div>
+                            </div>
+                            <div class="progress-text">
+                                <span id="progressPercent">0%</span>
+                            </div>
+                        </div>
+                        
+                        <div class="scan-activity" id="scanActivity">
+                            <div class="activity-header">
+                                <h4>Recent Activity</h4>
+                                <button class="clear-activity" id="clearActivity">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                            <div class="activity-list" id="activityList">
+                                <!-- Activity items will appear here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scan Results -->
+                <div class="scan-results-section" id="scanResultsSection" style="display: none;">
+                    <div class="results-header">
+                        <h3 id="resultsTitle">Scan Complete</h3>
+                        <div class="results-actions">
+                            <button class="btn btn-primary" id="newScanBtn">
+                                <i class="fas fa-plus"></i>
+                                New Scan
+                            </button>
+                            <button class="btn btn-secondary" id="exportResultsBtn">
+                                <i class="fas fa-download"></i>
+                                Export Results
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="results-summary">
+                        <div class="summary-card clean">
+                            <div class="summary-icon">
+                                <i class="fas fa-check-circle"></i>
+                            </div>
+                            <div class="summary-info">
+                                <h4 id="cleanFilesCount">0</h4>
+                                <p>Clean Files</p>
+                            </div>
+                        </div>
+                        
+                        <div class="summary-card threats">
+                            <div class="summary-icon">
+                                <i class="fas fa-exclamation-triangle"></i>
+                            </div>
+                            <div class="summary-info">
+                                <h4 id="threatFilesCount">0</h4>
+                                <p>Threats Detected</p>
+                            </div>
+                        </div>
+                        
+                        <div class="summary-card quarantined">
+                            <div class="summary-icon">
+                                <i class="fas fa-lock"></i>
+                            </div>
+                            <div class="summary-info">
+                                <h4 id="quarantinedFilesCount">0</h4>
+                                <p>Files Quarantined</p>
+                            </div>
+                        </div>
+                        
+                        <div class="summary-card errors">
+                            <div class="summary-icon">
+                                <i class="fas fa-times-circle"></i>
+                            </div>
+                            <div class="summary-info">
+                                <h4 id="errorFilesCount">0</h4>
+                                <p>Scan Errors</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="results-details">
+                        <div class="details-header">
+                            <h4>Detailed Results</h4>
+                            <div class="filter-controls">
+                                <select id="resultFilter">
+                                    <option value="all">All Results</option>
+                                    <option value="threats">Threats Only</option>
+                                    <option value="clean">Clean Files</option>
+                                    <option value="errors">Errors</option>
+                                </select>
+                                <input type="text" id="searchResults" placeholder="Search results...">
+                            </div>
+                        </div>
+                        
+                        <div class="results-table-container">
+                            <table class="results-table" id="resultsTable">
+                                <thead>
+                                    <tr>
+                                        <th>File Path</th>
+                                        <th>Status</th>
+                                        <th>Threat Type</th>
+                                        <th>Action Taken</th>
+                                        <th>Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resultsTableBody">
+                                    <!-- Results will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scan History -->
+                <div class="scan-history-section">
+                    <div class="history-header">
+                        <h3><i class="fas fa-history"></i> Recent Scans</h3>
+                        <button class="btn btn-sm" id="refreshHistory">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh
+                        </button>
+                    </div>
+                    
+                    <div class="history-list" id="historyList">
+                        <!-- Scan history items will appear here -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- File Browser Modal -->
+    <div class="modal-overlay" id="fileBrowserModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Select Files or Folders</h3>
+                <button class="modal-close" id="closeBrowserModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="file-browser">
+                    <div class="browser-toolbar">
+                        <button class="btn btn-sm" id="browserBack">
+                            <i class="fas fa-arrow-left"></i>
+                        </button>
+                        <div class="current-path" id="currentPath">/</div>
+                        <button class="btn btn-sm" id="browserHome">
+                            <i class="fas fa-home"></i>
+                        </button>
+                    </div>
+                    <div class="browser-content" id="browserContent">
+                        <!-- File browser content -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="selectPath">Select</button>
+                <button class="btn btn-secondary" id="cancelBrowser">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Container -->
+    <div class="notification-container" id="notificationContainer"></div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner">
+            <i class="fas fa-spinner fa-spin"></i>
+            <p>Processing...</p>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/scan.js') }}"></script>
+</body>
+</html>

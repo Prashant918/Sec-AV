@@ -2,6 +2,7 @@
 Prashant918 Advanced Antivirus - Enhanced Threat Detection Engine
 Multi-layered threat detection with AI/ML capabilities and cross-platform support
 """
+
 import os
 import sys
 import time
@@ -49,10 +50,13 @@ except ImportError:
 
 try:
     from sklearn.ensemble import IsolationForest
+    import sklearn
     HAS_SKLEARN = True
+    SKLEARN_VERSION = sklearn.__version__
 except ImportError:
     HAS_SKLEARN = False
     IsolationForest = None
+    SKLEARN_VERSION = None
 
 try:
     import yara
@@ -75,7 +79,7 @@ class DetectionResult:
     threat_level: ThreatLevel = ThreatLevel.CLEAN
     confidence: float = 0.0
     detection_method: str = "unknown"
-    threat_name: Optional[str] = None
+    threat_name: str = ""
     static_score: float = 0.0
     behavioral_score: float = 0.0
     ml_score: float = 0.0
@@ -83,7 +87,7 @@ class DetectionResult:
     heuristic_score: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
     scan_time: float = 0.0
-    error: Optional[str] = None
+    errors: List[str] = field(default_factory=list)
 
 class HeuristicEngine:
     """Heuristic analysis engine"""
@@ -91,93 +95,74 @@ class HeuristicEngine:
     def __init__(self):
         self.logger = SecureLogger("HeuristicEngine")
         self.suspicious_extensions = {
-            '.exe', '.scr', '.bat', '.cmd', '.com', '.pif', '.vbs', 
-            '.js', '.jar', '.app', '.deb', '.rpm', '.dmg'
+            '.exe', '.scr', '.bat', '.cmd', '.com', '.pif', '.vbs', '.js'
         }
-        self.packer_signatures = [
-            b'UPX!', b'FSG!', b'PECompact', b'ASPack', b'Themida'
-        ]
-    
-    def analyze(self, file_path: str) -> Dict[str, Any]:
+        
+    def analyze(self, file_path: str) -> float:
         """Perform heuristic analysis"""
         try:
-            result = {
-                'score': 0.0,
-                'indicators': [],
-                'suspicious_features': []
-            }
-            
-            file_path = Path(file_path)
+            path = Path(file_path)
+            score = 0.0
             
             # Check file extension
-            if file_path.suffix.lower() in self.suspicious_extensions:
-                result['score'] += 0.3
-                result['indicators'].append(f"Suspicious extension: {file_path.suffix}")
+            if path.suffix.lower() in self.suspicious_extensions:
+                score += 0.3
+            
+            # Check for double extensions
+            if len(path.suffixes) > 1:
+                score += 0.2
             
             # Check file size
             try:
-                file_size = file_path.stat().st_size
-                if file_size == 0:
-                    result['score'] += 0.5
-                    result['indicators'].append("Zero-byte file")
-                elif file_size > 100 * 1024 * 1024:  # 100MB
-                    result['score'] += 0.2
-                    result['indicators'].append("Unusually large file")
+                size = path.stat().st_size
+                if size < 1024:  # Very small files
+                    score += 0.1
+                elif size > 100 * 1024 * 1024:  # Very large files
+                    score += 0.1
             except OSError:
                 pass
             
-            # Check for double extensions
-            if file_path.name.count('.') > 1:
-                result['score'] += 0.4
-                result['indicators'].append("Multiple file extensions")
-            
-            # Check for packer signatures
+            # Check entropy if possible
             try:
                 with open(file_path, 'rb') as f:
-                    header = f.read(1024)
-                    for signature in self.packer_signatures:
-                        if signature in header:
-                            result['score'] += 0.6
-                            result['indicators'].append(f"Packed executable detected")
-                            break
+                    data = f.read(8192)  # Read first 8KB
+                    entropy = self._calculate_entropy(data)
+                    if entropy > 7.5:  # High entropy suggests encryption/packing
+                        score += 0.2
             except (OSError, PermissionError):
                 pass
             
-            # Calculate entropy
-            entropy = self._calculate_entropy(file_path)
-            if entropy > 7.5:
-                result['score'] += 0.4
-                result['indicators'].append(f"High entropy: {entropy:.2f}")
-            
-            result['score'] = min(result['score'], 1.0)
-            return result
+            return min(score, 1.0)
             
         except Exception as e:
             self.logger.error(f"Heuristic analysis failed for {file_path}: {e}")
-            return {'score': 0.0, 'indicators': [], 'suspicious_features': []}
+            return 0.0
     
-    def _calculate_entropy(self, file_path: str) -> float:
-        """Calculate file entropy"""
+    def _calculate_entropy(self, data: bytes) -> float:
+        """Calculate Shannon entropy"""
+        if not data:
+            return 0.0
+        
         try:
-            with open(file_path, 'rb') as f:
-                data = f.read(8192)  # Read first 8KB
-                if not data:
-                    return 0.0
-                
-                # Calculate byte frequency
-                byte_counts = [0] * 256
+            if HAS_NUMPY:
+                # Use numpy for faster calculation
+                byte_counts = np.bincount(np.frombuffer(data, dtype=np.uint8))
+                probabilities = byte_counts[byte_counts > 0] / len(data)
+                entropy = -np.sum(probabilities * np.log2(probabilities))
+            else:
+                # Fallback calculation
+                byte_counts = {}
                 for byte in data:
-                    byte_counts[byte] += 1
+                    byte_counts[byte] = byte_counts.get(byte, 0) + 1
                 
-                # Calculate entropy
                 entropy = 0.0
                 data_len = len(data)
-                for count in byte_counts:
-                    if count > 0:
-                        probability = count / data_len
-                        entropy -= probability * (probability.bit_length() - 1)
-                
-                return entropy
+                for count in byte_counts.values():
+                    probability = count / data_len
+                    entropy -= probability * (probability.bit_length() - 1)
+            
+            return entropy
+            
         except Exception:
             return 0.0
 
@@ -186,327 +171,106 @@ class BehavioralAnalyzer:
     
     def __init__(self):
         self.logger = SecureLogger("BehavioralAnalyzer")
-        self.patterns = self._load_patterns()
-    
-    def _load_patterns(self) -> Dict[str, List[str]]:
-        """Load behavioral patterns"""
-        return {
-            'file_operations': [
-                'CreateFile', 'WriteFile', 'DeleteFile', 'MoveFile',
-                'CopyFile', 'SetFileAttributes'
-            ],
-            'registry_operations': [
-                'RegCreateKey', 'RegSetValue', 'RegDeleteKey',
-                'RegOpenKey', 'RegQueryValue'
-            ],
-            'network_operations': [
-                'InternetOpen', 'InternetConnect', 'HttpSendRequest',
-                'send', 'recv', 'connect', 'bind'
-            ],
-            'process_operations': [
-                'CreateProcess', 'TerminateProcess', 'OpenProcess',
-                'CreateRemoteThread', 'WriteProcessMemory'
-            ],
-            'crypto_operations': [
-                'CryptEncrypt', 'CryptDecrypt', 'CryptGenKey',
-                'CryptAcquireContext'
-            ]
-        }
-    
-    def analyze(self, file_path: str) -> Dict[str, Any]:
+        self.suspicious_patterns = [
+            'temp', 'tmp', 'appdata', 'roaming', 'startup',
+            'system32', 'syswow64', 'programdata'
+        ]
+        
+    def analyze(self, file_path: str) -> float:
         """Perform behavioral analysis"""
         try:
-            result = {
-                'score': 0.0,
-                'behaviors': [],
-                'risk_indicators': []
-            }
-            
-            # Simulate behavioral analysis based on file characteristics
-            file_path = Path(file_path)
-            
-            # Check for suspicious file names
-            suspicious_names = [
-                'svchost', 'winlogon', 'explorer', 'system32',
-                'temp', 'tmp', 'cache'
-            ]
-            
-            for name in suspicious_names:
-                if name.lower() in file_path.name.lower():
-                    result['score'] += 0.3
-                    result['behaviors'].append(f"Suspicious filename: {name}")
+            path = Path(file_path)
+            score = 0.0
             
             # Check file location
-            try:
-                file_str = str(file_path.absolute()).lower()
-                suspicious_paths = [
-                    'temp', 'tmp', 'appdata', 'downloads', 'desktop'
-                ]
-                
-                for path in suspicious_paths:
-                    if path in file_str:
-                        result['score'] += 0.2
-                        result['behaviors'].append(f"Suspicious location: {path}")
-                        break
-            except Exception:
-                pass
+            path_str = str(path).lower()
+            for pattern in self.suspicious_patterns:
+                if pattern in path_str:
+                    score += 0.1
             
-            # Simulate API call analysis
-            if file_path.suffix.lower() in ['.exe', '.dll', '.scr']:
-                result['score'] += 0.1
-                result['behaviors'].append("Executable file type")
+            # Check filename patterns
+            filename = path.name.lower()
+            if any(char in filename for char in ['$', '@', '#', '%']):
+                score += 0.1
             
-            result['score'] = min(result['score'], 1.0)
-            return result
+            # Check for hidden files
+            if filename.startswith('.') and len(filename) > 1:
+                score += 0.05
+            
+            return min(score, 1.0)
             
         except Exception as e:
             self.logger.error(f"Behavioral analysis failed for {file_path}: {e}")
-            return {'score': 0.0, 'behaviors': [], 'risk_indicators': []}
+            return 0.0
 
 class MLDetector:
-    """Machine Learning detector with ensemble approach"""
+    """Simplified ML detector without IsolationForest issues"""
     
     def __init__(self):
         self.logger = SecureLogger("MLDetector")
-        self.models = {}
-        self.is_initialized = False
+        self.initialized = False
+        self.models = None
         
-        if HAS_SKLEARN:
-            self.anomaly_detector = IsolationForest(
-                contamination=0.1, 
-                random_state=42,
-                n_estimators=100
-            )
-        else:
-            self.anomaly_detector = None
-        
-        if HAS_TENSORFLOW:
-            self.cnn_model = self._create_cnn_model()
-        else:
-            self.cnn_model = None
-    
-    def _create_cnn_model(self):
-        """Create CNN model for malware detection"""
-        if not HAS_TENSORFLOW:
-            return None
-        
-        try:
-            model = tf.keras.Sequential([
-                tf.keras.layers.Conv1D(64, 3, activation='relu', input_shape=(1024, 1)),
-                tf.keras.layers.MaxPooling1D(2),
-                tf.keras.layers.Conv1D(128, 3, activation='relu'),
-                tf.keras.layers.MaxPooling1D(2),
-                tf.keras.layers.Conv1D(256, 3, activation='relu'),
-                tf.keras.layers.GlobalMaxPooling1D(),
-                tf.keras.layers.Dense(128, activation='relu'),
-                tf.keras.layers.Dropout(0.5),
-                tf.keras.layers.Dense(1, activation='sigmoid')
-            ])
-            
-            model.compile(
-                optimizer='adam',
-                loss='binary_crossentropy',
-                metrics=['accuracy']
-            )
-            
-            return model
-        except Exception as e:
-            self.logger.error(f"Failed to create CNN model: {e}")
-            return None
+        # Check dependencies
+        if not HAS_NUMPY:
+            self.logger.warning("NumPy not available - ML detection disabled")
+        if not HAS_SKLEARN:
+            self.logger.warning("Scikit-learn not available - ML detection disabled")
     
     def initialize(self) -> bool:
-        """Initialize ML models"""
+        """Initialize ML detector"""
         try:
-            if not HAS_NUMPY:
-                self.logger.warning("NumPy not available, ML detection disabled")
+            if not HAS_NUMPY or not HAS_SKLEARN:
+                self.logger.warning("Required ML dependencies not available")
                 return False
             
-            # Train anomaly detector with synthetic data
-            if self.anomaly_detector:
-                synthetic_data = self._generate_synthetic_data()
-                self.anomaly_detector.fit(synthetic_data)
-                self.logger.info("Anomaly detector trained")
-            
-            self.is_initialized = True
+            self.logger.info("ML detector initialized successfully (simplified mode)")
+            self.initialized = True
             return True
             
         except Exception as e:
             self.logger.error(f"ML detector initialization failed: {e}")
             return False
     
-    def _generate_synthetic_data(self) -> np.ndarray:
-        """Generate synthetic training data"""
-        if not HAS_NUMPY:
-            return None
-        
-        # Generate 1000 samples with 10 features each
-        normal_samples = np.random.normal(0, 1, (800, 10))
-        anomaly_samples = np.random.normal(3, 2, (200, 10))
-        
-        return np.vstack([normal_samples, anomaly_samples])
-    
-    def analyze(self, file_path: str) -> Dict[str, Any]:
+    def analyze(self, file_path: str) -> float:
         """Perform ML analysis"""
         try:
-            result = {
-                'score': 0.0,
-                'predictions': {},
-                'features': {}
-            }
+            if not self.initialized:
+                return 0.0
             
-            if not self.is_initialized:
-                return result
+            # Simple heuristic-based ML simulation
+            path = Path(file_path)
+            score = 0.0
             
-            # Extract features
-            features = self._extract_features(file_path)
-            if not features:
-                return result
+            # File size analysis
+            try:
+                size = path.stat().st_size
+                if size < 1024 or size > 50 * 1024 * 1024:
+                    score += 0.1
+            except OSError:
+                pass
             
-            result['features'] = features
+            # Extension analysis
+            suspicious_exts = {'.exe', '.scr', '.bat', '.cmd', '.vbs', '.js'}
+            if path.suffix.lower() in suspicious_exts:
+                score += 0.2
             
-            # Anomaly detection
-            if self.anomaly_detector and HAS_NUMPY:
-                feature_vector = np.array([list(features.values())]).reshape(1, -1)
-                anomaly_score = self.anomaly_detector.decision_function(feature_vector)[0]
-                is_anomaly = self.anomaly_detector.predict(feature_vector)[0] == -1
-                
-                result['predictions']['anomaly'] = {
-                    'score': float(anomaly_score),
-                    'is_anomaly': bool(is_anomaly)
-                }
-                
-                if is_anomaly:
-                    result['score'] += 0.7
+            # Content analysis (simplified)
+            try:
+                with open(file_path, 'rb') as f:
+                    data = f.read(1024)  # Read first 1KB
+                    if b'eval(' in data or b'exec(' in data:
+                        score += 0.3
+                    if data.count(b'\x00') > len(data) * 0.1:  # Many null bytes
+                        score += 0.1
+            except (OSError, PermissionError):
+                pass
             
-            # CNN prediction
-            if self.cnn_model and HAS_TENSORFLOW and HAS_NUMPY:
-                try:
-                    file_data = self._prepare_file_data(file_path)
-                    if file_data is not None:
-                        prediction = self.cnn_model.predict(file_data, verbose=0)[0][0]
-                        result['predictions']['cnn'] = float(prediction)
-                        result['score'] += prediction * 0.8
-                except Exception as e:
-                    self.logger.debug(f"CNN prediction failed: {e}")
-            
-            result['score'] = min(result['score'], 1.0)
-            return result
+            return min(score, 1.0)
             
         except Exception as e:
             self.logger.error(f"ML analysis failed for {file_path}: {e}")
-            return {'score': 0.0, 'predictions': {}, 'features': {}}
-    
-    def _extract_features(self, file_path: str) -> Dict[str, float]:
-        """Extract features from file"""
-        try:
-            features = {}
-            file_path = Path(file_path)
-            
-            # File size feature
-            try:
-                file_size = file_path.stat().st_size
-                features['file_size'] = min(file_size / (1024 * 1024), 100)  # MB, capped at 100
-            except OSError:
-                features['file_size'] = 0
-            
-            # Entropy feature
-            features['entropy'] = self._calculate_entropy(file_path)
-            
-            # Extension feature
-            ext_map = {'.exe': 1, '.dll': 2, '.scr': 3, '.bat': 4, '.pdf': 5}
-            features['extension'] = ext_map.get(file_path.suffix.lower(), 0)
-            
-            # String count features
-            string_stats = self._analyze_strings(file_path)
-            features.update(string_stats)
-            
-            # Pad to 10 features
-            while len(features) < 10:
-                features[f'padding_{len(features)}'] = 0.0
-            
-            return features
-            
-        except Exception as e:
-            self.logger.debug(f"Feature extraction failed: {e}")
-            return {}
-    
-    def _calculate_entropy(self, file_path: str) -> float:
-        """Calculate file entropy"""
-        try:
-            with open(file_path, 'rb') as f:
-                data = f.read(8192)
-                if not data:
-                    return 0.0
-                
-                byte_counts = [0] * 256
-                for byte in data:
-                    byte_counts[byte] += 1
-                
-                entropy = 0.0
-                data_len = len(data)
-                for count in byte_counts:
-                    if count > 0:
-                        probability = count / data_len
-                        entropy -= probability * (probability.bit_length() - 1)
-                
-                return min(entropy, 8.0)
-        except Exception:
             return 0.0
-    
-    def _analyze_strings(self, file_path: str) -> Dict[str, float]:
-        """Analyze strings in file"""
-        try:
-            with open(file_path, 'rb') as f:
-                data = f.read(8192)
-                
-            # Count printable strings
-            strings = []
-            current_string = ""
-            
-            for byte in data:
-                if 32 <= byte <= 126:  # Printable ASCII
-                    current_string += chr(byte)
-                else:
-                    if len(current_string) >= 4:
-                        strings.append(current_string)
-                    current_string = ""
-            
-            if len(current_string) >= 4:
-                strings.append(current_string)
-            
-            return {
-                'string_count': min(len(strings) / 100, 10),
-                'avg_string_length': min(sum(len(s) for s in strings) / max(len(strings), 1) / 10, 10),
-                'suspicious_strings': sum(1 for s in strings if any(
-                    keyword in s.lower() for keyword in ['password', 'admin', 'root', 'hack']
-                )) / max(len(strings), 1)
-            }
-            
-        except Exception:
-            return {'string_count': 0, 'avg_string_length': 0, 'suspicious_strings': 0}
-    
-    def _prepare_file_data(self, file_path: str) -> Optional[np.ndarray]:
-        """Prepare file data for CNN"""
-        if not HAS_NUMPY:
-            return None
-        
-        try:
-            with open(file_path, 'rb') as f:
-                data = f.read(1024)
-            
-            # Pad or truncate to 1024 bytes
-            if len(data) < 1024:
-                data += b'\x00' * (1024 - len(data))
-            else:
-                data = data[:1024]
-            
-            # Convert to numpy array and reshape
-            array = np.frombuffer(data, dtype=np.uint8)
-            array = array.astype(np.float32) / 255.0
-            return array.reshape(1, 1024, 1)
-            
-        except Exception:
-            return None
 
 class YaraRuleManager:
     """YARA rule management"""
@@ -518,130 +282,82 @@ class YaraRuleManager:
         
         if HAS_YARA:
             self._load_rules()
+        else:
+            self.logger.warning("YARA not available - signature detection disabled")
     
     def _load_rules(self):
         """Load YARA rules"""
         try:
             rules_dir = Path("yara_rules")
-            if not rules_dir.exists():
-                rules_dir.mkdir(parents=True, exist_ok=True)
-                self._create_default_rules(rules_dir)
-            
-            rule_files = {}
-            for rule_file in rules_dir.glob("*.yar"):
-                rule_files[rule_file.stem] = str(rule_file)
-            
-            if rule_files:
-                self.rules = yara.compile(filepaths=rule_files)
-                self.rules_loaded = True
-                self.logger.info(f"Loaded {len(rule_files)} YARA rule files")
+            if rules_dir.exists():
+                rule_files = {}
+                for rule_file in rules_dir.glob("*.yar"):
+                    rule_files[rule_file.stem] = str(rule_file)
+                
+                if rule_files:
+                    self.rules = yara.compile(filepaths=rule_files)
+                    self.rules_loaded = True
+                    self.logger.info(f"Loaded {len(rule_files)} YARA rule files")
+                else:
+                    self._create_default_rules()
             else:
-                self.logger.warning("No YARA rules found")
+                self._create_default_rules()
                 
         except Exception as e:
             self.logger.error(f"Failed to load YARA rules: {e}")
+            self._create_default_rules()
     
-    def _create_default_rules(self, rules_dir: Path):
+    def _create_default_rules(self):
         """Create default YARA rules"""
-        default_rules = {
-            "malware_generic.yar": '''
-rule Generic_Malware_Strings
-{
-    meta:
-        description = "Generic malware string patterns"
-        author = "Advanced Antivirus"
+        try:
+            default_rule = '''
+            rule Generic_Malware_Strings
+            {
+                meta:
+                    description = "Generic malware string patterns"
+                    author = "Advanced Antivirus"
+                
+                strings:
+                    $s1 = "backdoor" nocase
+                    $s2 = "keylogger" nocase
+                    $s3 = "trojan" nocase
+                    $s4 = "rootkit" nocase
+                    $s5 = "ransomware" nocase
+                
+                condition:
+                    any of them
+            }
+            '''
+            
+            self.rules = yara.compile(source=default_rule)
+            self.rules_loaded = True
+            self.logger.info("Created default YARA rules")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create default YARA rules: {e}")
     
-    strings:
-        $s1 = "backdoor" nocase
-        $s2 = "keylogger" nocase
-        $s3 = "trojan" nocase
-        $s4 = "rootkit" nocase
-        $s5 = "ransomware" nocase
-        $s6 = "payload" nocase
-        $s7 = "shellcode" nocase
-    
-    condition:
-        any of them
-}
-
-rule Suspicious_API_Calls
-{
-    meta:
-        description = "Suspicious Windows API calls"
-    
-    strings:
-        $api1 = "CreateRemoteThread"
-        $api2 = "WriteProcessMemory"
-        $api3 = "VirtualAllocEx"
-        $api4 = "SetWindowsHookEx"
-        $api5 = "GetAsyncKeyState"
-    
-    condition:
-        3 of them
-}
-''',
-            "ransomware.yar": '''
-rule Ransomware_Indicators
-{
-    meta:
-        description = "Ransomware behavior indicators"
-    
-    strings:
-        $r1 = "encrypt" nocase
-        $r2 = "decrypt" nocase
-        $r3 = "bitcoin" nocase
-        $r4 = "ransom" nocase
-        $r5 = ".locked"
-        $r6 = ".encrypted"
-    
-    condition:
-        2 of them
-}
-'''
-        }
-        
-        for filename, content in default_rules.items():
-            rule_path = rules_dir / filename
-            with open(rule_path, 'w') as f:
-                f.write(content)
-    
-    def scan(self, file_path: str) -> Dict[str, Any]:
+    def scan(self, file_path: str) -> List[Dict[str, Any]]:
         """Scan file with YARA rules"""
         try:
-            result = {
-                'score': 0.0,
-                'matches': [],
-                'rule_count': 0
-            }
-            
-            if not HAS_YARA or not self.rules_loaded:
-                return result
+            if not self.rules_loaded or not self.rules:
+                return []
             
             matches = self.rules.match(file_path)
-            result['rule_count'] = len(matches)
+            results = []
             
             for match in matches:
-                result['matches'].append({
+                results.append({
                     'rule': match.rule,
+                    'namespace': match.namespace,
                     'tags': match.tags,
-                    'meta': match.meta,
-                    'strings': [str(s) for s in match.strings]
+                    'meta': match.meta
                 })
-                
-                # Calculate score based on rule matches
-                if 'malware' in match.rule.lower():
-                    result['score'] += 0.8
-                elif 'suspicious' in match.rule.lower():
-                    result['score'] += 0.6
-                else:
-                    result['score'] += 0.4
             
-            result['score'] = min(result['score'], 1.0)
-            return result
+            return results
             
         except Exception as e:
             self.logger.error(f"YARA scan failed for {file_path}: {e}")
-            return {'score': 0.0, 'matches': [], 'rule_count': 0}
+            return []
 
 class AdvancedThreatDetectionEngine:
     """Advanced multi-layered threat detection engine"""
@@ -693,133 +409,118 @@ class AdvancedThreatDetectionEngine:
             self.logger.critical(f"Failed to initialize detection engine: {e}")
             raise AntivirusError(f"Engine initialization failed: {e}")
     
-    def scan_file(self, file_path: str, use_cache: bool = True) -> DetectionResult:
-        """Scan a single file for threats"""
+    def scan_file(self, file_path: str) -> DetectionResult:
+        """Scan a file for threats"""
         start_time = time.time()
         
         try:
-            file_path = str(Path(file_path).resolve())
+            # Check cache first
+            cached_result = self._get_cached_result(file_path)
+            if cached_result:
+                return cached_result
             
-            # Check cache
-            if use_cache:
-                cached_result = self._get_cached_result(file_path)
-                if cached_result:
-                    return cached_result
-            
-            # Validate file
-            if not Path(file_path).exists():
-                return DetectionResult(
-                    file_path=file_path,
-                    error="File not found"
-                )
-            
-            # Perform multi-layered analysis
             result = DetectionResult(file_path=file_path)
             
-            # Run all analysis methods
-            analyses = [
-                ('heuristic', self.heuristic_engine.analyze),
-                ('behavioral', self.behavioral_analyzer.analyze),
-                ('ml', self.ml_detector.analyze),
-                ('yara', self.yara_manager.scan)
-            ]
+            # Perform different types of analysis
+            try:
+                result.heuristic_score = self.heuristic_engine.analyze(file_path)
+            except Exception as e:
+                result.errors.append(f"Heuristic analysis failed: {e}")
             
-            for analysis_name, analysis_func in analyses:
-                try:
-                    analysis_result = analysis_func(file_path)
-                    score = analysis_result.get('score', 0.0)
-                    
-                    if analysis_name == 'heuristic':
-                        result.heuristic_score = score
-                        result.metadata['heuristic'] = analysis_result
-                    elif analysis_name == 'behavioral':
-                        result.behavioral_score = score
-                        result.metadata['behavioral'] = analysis_result
-                    elif analysis_name == 'ml':
-                        result.ml_score = score
-                        result.metadata['ml'] = analysis_result
-                    elif analysis_name == 'yara':
-                        result.signature_score = score
-                        result.metadata['yara'] = analysis_result
-                        
-                except Exception as e:
-                    self.logger.error(f"{analysis_name} analysis failed: {e}")
+            try:
+                result.behavioral_score = self.behavioral_analyzer.analyze(file_path)
+            except Exception as e:
+                result.errors.append(f"Behavioral analysis failed: {e}")
             
-            # Calculate overall threat assessment
-            result = self._calculate_threat_level(result)
+            try:
+                result.ml_score = self.ml_detector.analyze(file_path)
+            except Exception as e:
+                result.errors.append(f"ML analysis failed: {e}")
             
-            # Update statistics
+            # YARA scanning
+            try:
+                yara_matches = self.yara_manager.scan(file_path)
+                if yara_matches:
+                    result.signature_score = 1.0
+                    result.threat_name = yara_matches[0].get('rule', 'YARA_Detection')
+                    result.metadata['yara_matches'] = yara_matches
+            except Exception as e:
+                result.errors.append(f"YARA scan failed: {e}")
+            
+            # Calculate overall threat level
+            result.threat_level, result.confidence = self._calculate_threat_level(result)
+            
+            # Determine detection method
+            if result.signature_score > 0:
+                result.detection_method = "signature"
+            elif result.ml_score > self.ml_threshold:
+                result.detection_method = "machine_learning"
+            elif result.heuristic_score > self.heuristic_threshold:
+                result.detection_method = "heuristic"
+            elif result.behavioral_score > self.behavioral_threshold:
+                result.detection_method = "behavioral"
+            else:
+                result.detection_method = "clean"
+            
             result.scan_time = time.time() - start_time
-            self._update_stats(result)
             
             # Cache result
-            if use_cache:
-                self._cache_result(file_path, result)
+            self._cache_result(file_path, result)
+            
+            # Update statistics
+            self._update_stats(result)
             
             return result
             
         except Exception as e:
             self.logger.error(f"Scan failed for {file_path}: {e}")
-            return DetectionResult(
-                file_path=file_path,
-                error=str(e),
-                scan_time=time.time() - start_time
-            )
+            result = DetectionResult(file_path=file_path)
+            result.errors.append(str(e))
+            result.scan_time = time.time() - start_time
+            return result
     
-    def _calculate_threat_level(self, result: DetectionResult) -> DetectionResult:
-        """Calculate overall threat level"""
+    def _calculate_threat_level(self, result: DetectionResult) -> Tuple[ThreatLevel, float]:
+        """Calculate overall threat level and confidence"""
         try:
             # Weighted scoring
             weights = {
+                'signature': 0.4,
+                'ml': 0.3,
                 'heuristic': 0.2,
-                'behavioral': 0.25,
-                'ml': 0.35,
-                'signature': 0.2
+                'behavioral': 0.1
             }
             
-            overall_score = (
-                result.heuristic_score * weights['heuristic'] +
-                result.behavioral_score * weights['behavioral'] +
+            total_score = (
+                result.signature_score * weights['signature'] +
                 result.ml_score * weights['ml'] +
-                result.signature_score * weights['signature']
+                result.heuristic_score * weights['heuristic'] +
+                result.behavioral_score * weights['behavioral']
             )
             
-            result.confidence = overall_score
+            confidence = total_score
             
-            # Determine threat level
-            if overall_score >= 0.9:
-                result.threat_level = ThreatLevel.CRITICAL
-                result.threat_name = "High-confidence malware"
-                result.detection_method = "Multi-layer analysis"
-            elif overall_score >= 0.7:
-                result.threat_level = ThreatLevel.MALWARE
-                result.threat_name = "Probable malware"
-                result.detection_method = "Statistical analysis"
-            elif overall_score >= 0.4:
-                result.threat_level = ThreatLevel.SUSPICIOUS
-                result.threat_name = "Suspicious file"
-                result.detection_method = "Heuristic analysis"
+            if total_score >= 0.9:
+                return ThreatLevel.CRITICAL, confidence
+            elif total_score >= 0.7:
+                return ThreatLevel.MALWARE, confidence
+            elif total_score >= 0.4:
+                return ThreatLevel.SUSPICIOUS, confidence
             else:
-                result.threat_level = ThreatLevel.CLEAN
-                result.threat_name = None
-                result.detection_method = "Clean"
-            
-            return result
-            
+                return ThreatLevel.CLEAN, confidence
+                
         except Exception as e:
             self.logger.error(f"Threat level calculation failed: {e}")
-            result.error = str(e)
-            return result
+            return ThreatLevel.CLEAN, 0.0
     
     def _get_cached_result(self, file_path: str) -> Optional[DetectionResult]:
         """Get cached scan result"""
         try:
             with self.cache_lock:
                 if file_path in self.cache:
-                    cached_data = self.cache[file_path]
-                    # Check if cache is still valid (1 hour)
-                    if time.time() - cached_data['timestamp'] < 3600:
-                        return cached_data['result']
+                    cached_time, result = self.cache[file_path]
+                    # Cache valid for 1 hour
+                    if time.time() - cached_time < 3600:
+                        return result
                     else:
                         del self.cache[file_path]
             return None
@@ -830,18 +531,15 @@ class AdvancedThreatDetectionEngine:
         """Cache scan result"""
         try:
             with self.cache_lock:
-                self.cache[file_path] = {
-                    'result': result,
-                    'timestamp': time.time()
-                }
-                
+                self.cache[file_path] = (time.time(), result)
                 # Limit cache size
                 if len(self.cache) > 1000:
+                    # Remove oldest entries
                     oldest_key = min(self.cache.keys(), 
-                                   key=lambda k: self.cache[k]['timestamp'])
+                                   key=lambda k: self.cache[k][0])
                     del self.cache[oldest_key]
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug(f"Cache operation failed: {e}")
     
     def _update_stats(self, result: DetectionResult):
         """Update scanning statistics"""
@@ -850,29 +548,53 @@ class AdvancedThreatDetectionEngine:
             self.stats['scan_time'] += result.scan_time
             self.stats['last_scan'] = time.time()
             
-            if result.threat_level in [ThreatLevel.MALWARE, ThreatLevel.CRITICAL]:
+            if result.threat_level != ThreatLevel.CLEAN:
                 self.stats['threats_detected'] += 1
                 
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug(f"Stats update failed: {e}")
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get engine statistics"""
+        """Get scanning statistics"""
         return self.stats.copy()
     
     def clear_cache(self):
-        """Clear scan cache"""
+        """Clear scan result cache"""
         with self.cache_lock:
             self.cache.clear()
     
     def shutdown(self):
-        """Shutdown the engine"""
+        """Shutdown the detection engine"""
         try:
             self.thread_pool.shutdown(wait=True)
             self.clear_cache()
             self.logger.info("Threat detection engine shutdown complete")
         except Exception as e:
-            self.logger.error(f"Engine shutdown error: {e}")
+            self.logger.error(f"Shutdown failed: {e}")
 
-# Compatibility aliases for backward compatibility
-EnsembleMLDetector = MLDetector
+def main():
+    """Test the threat detection engine"""
+    try:
+        engine = AdvancedThreatDetectionEngine()
+        
+        # Test with a temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(b"test content for scanning")
+            tmp_path = tmp.name
+        
+        result = engine.scan_file(tmp_path)
+        print(f"Scan result: {result}")
+        
+        # Cleanup
+        os.unlink(tmp_path)
+        engine.shutdown()
+        
+    except Exception as e:
+        print(f"Test failed: {e}")
+        return 1
+    
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())

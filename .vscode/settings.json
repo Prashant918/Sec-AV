@@ -1,5 +1,17 @@
 {
     "CodeGPT.apiKey": "CodeGPT Plus Beta",
     "Codegeex.SidebarUI.LanguagePreference": "English",
-    "Codegeex.RepoIndex": true
+    "Codegeex.RepoIndex": true,
+    "python.defaultInterpreterPath": "./venv/bin/python",
+    "python.analysis.extraPaths": [
+        "./src"
+    ],
+    "python.analysis.autoSearchPaths": true,
+    "python.analysis.autoImportCompletions": true,
+    "pylance.analysis.autoImportCompletions": true,
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.formatting.provider": "black",
+    "python.analysis.typeCheckingMode": "basic"
 }

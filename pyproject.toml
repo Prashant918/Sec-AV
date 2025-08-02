@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prashant918-advanced-antivirus"
-version = "1.0.2"
+version = "1.0.3"
 description = "Advanced AI-powered antivirus system with behavioral analysis and cloud intelligence"
 readme = "README.md"
 license = { text = "MIT" }
@@ -43,18 +43,21 @@ dependencies = [
     "aiohttp>=3.8.0,<4.0.0",
     "dnspython>=2.2.0,<3.0.0",
     "urllib3>=2.0.0,<3.0.0",
-    "pyfiglet",
-    "termcolor",
-    "click",
-    "rich",
-    "packaging",
+    "pyfiglet>=0.8.0",
+    "termcolor>=2.0.0",
+    "click>=8.0.0",
+    "rich>=13.0.0",
+    "packaging>=21.0.0",
+    "pywin32>=300; sys_platform == 'win32'",
+    "python-systemd>=234; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]
 ml = [
     "numpy>=1.21.0,<2.0.0",
-    "scikit-learn>=1.3.0,<1.5.0",
+    "scikit-learn>=1.3.0,<1.8.0",
     "pandas>=2.0.0,<2.3.0",
+    "tensorflow>=2.12.0,<2.16.0",
 ]
 advanced = [
     "scapy>=2.4.5,<3.0.0",
@@ -83,4 +86,4 @@ prashant918-av-service = "prashant918_antivirus.service.service_manager:main"
 Homepage = "https://github.com/prashant918/advanced-antivirus"
 Repository = "https://github.com/prashant918/advanced-antivirus"
 Issues = "https://github.com/prashant918/advanced-antivirus/issues"
-Documentation
+Documentation = "https://prashant918-antivirus.readthedocs.io"

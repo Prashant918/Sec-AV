@@ -1,4 +1,3 @@
-
 rule Ransomware_Indicators
 {
     meta:

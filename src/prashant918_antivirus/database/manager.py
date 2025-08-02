@@ -1,14 +1,13 @@
 """
-Prashant918 Advanced Antivirus - Unified Database Manager
-Consolidated database management for Oracle and SQLite
+Database Manager - Unified database operations for SQLite and Oracle
 """
 
-import os
 import sqlite3
 import threading
+import json
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 from contextlib import contextmanager
 
 try:
@@ -22,6 +21,16 @@ try:
 except ImportError:
     secure_config = type('Config', (), {'get': lambda self, key, default=None: default})()
 
+try:
+    from ..exceptions import DatabaseError, ConnectionError, QueryError
+except ImportError:
+    class DatabaseError(Exception):
+        pass
+    class ConnectionError(DatabaseError):
+        pass
+    class QueryError(DatabaseError):
+        pass
+
 # Optional Oracle support
 try:
     import cx_Oracle
@@ -33,105 +42,94 @@ except ImportError:
 
 class DatabaseManager:
     """
-    Unified database manager supporting both SQLite and Oracle
+    Unified database manager supporting SQLite and Oracle
     """
     
     def __init__(self):
         self.logger = SecureLogger("DatabaseManager")
-        self.db_type = secure_config.get("database.type", "sqlite")
-        self.connection = None
-        self.connection_lock = threading.Lock()
+        self.db_type = secure_config.get('database.type', 'sqlite')
+        self.connection_pool = {}
+        self.lock = threading.Lock()
         
-        # Database paths and configuration
-        self.sqlite_path = secure_config.get(
-            "database.sqlite_path", 
-            str(Path.home() / ".prashant918_antivirus" / "data" / "antivirus.db")
-        )
-        
-        self.oracle_config = secure_config.get("database.oracle", {
-            "host": "localhost",
-            "port": 1521,
-            "service_name": "XEPDB1",
-            "username": "antivirus",
-            "password": "",
-            "pool_size": 5,
-            "max_overflow": 10
-        })
-        
+        # Initialize database
         self._initialize_database()
-        
+    
     def _initialize_database(self):
-        """Initialize database connection and create tables"""
+        """Initialize database connection and tables"""
         try:
-            if self.db_type.lower() == "oracle" and HAS_ORACLE:
+            if self.db_type == 'sqlite':
+                self._initialize_sqlite()
+            elif self.db_type == 'oracle' and HAS_ORACLE:
                 self._initialize_oracle()
             else:
+                self.logger.warning(f"Unsupported database type: {self.db_type}, falling back to SQLite")
+                self.db_type = 'sqlite'
                 self._initialize_sqlite()
-                
+            
+            # Create tables
             self._create_tables()
-            self.logger.info(f"Database initialized successfully ({self.db_type})")
             
         except Exception as e:
             self.logger.error(f"Database initialization failed: {e}")
-            # Fallback to SQLite
-            if self.db_type.lower() != "sqlite":
-                self.logger.info("Falling back to SQLite database")
-                self.db_type = "sqlite"
-                self._initialize_sqlite()
-                self._create_tables()
-                
+            raise DatabaseError(f"Failed to initialize database: {e}")
+    
     def _initialize_sqlite(self):
         """Initialize SQLite database"""
-        try:
-            # Ensure directory exists
-            db_path = Path(self.sqlite_path)
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            self.connection = sqlite3.connect(
-                self.sqlite_path,
-                check_same_thread=False,
-                timeout=30.0
-            )
-            
-            # Enable foreign keys and WAL mode
-            self.connection.execute("PRAGMA foreign_keys = ON")
-            self.connection.execute("PRAGMA journal_mode = WAL")
-            self.connection.execute("PRAGMA synchronous = NORMAL")
-            self.connection.commit()
-            
-        except Exception as e:
-            raise Exception(f"SQLite initialization failed: {e}")
-            
+        db_path = secure_config.get('database.sqlite_path', 
+                                   str(Path.home() / ".prashant918_antivirus" / "antivirus.db"))
+        
+        # Ensure directory exists
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        self.connection_string = db_path
+        self.logger.info(f"Using SQLite database: {db_path}")
+    
     def _initialize_oracle(self):
         """Initialize Oracle database connection"""
         if not HAS_ORACLE:
-            raise Exception("Oracle client not available")
-            
+            raise DatabaseError("Oracle support not available - cx_Oracle not installed")
+        
+        oracle_config = {
+            'host': secure_config.get('database.oracle.host', 'localhost'),
+            'port': secure_config.get('database.oracle.port', 1521),
+            'service_name': secure_config.get('database.oracle.service_name', 'XE'),
+            'username': secure_config.get('database.oracle.username', 'antivirus'),
+            'password': secure_config.get('database.oracle.password', 'password')
+        }
+        
+        dsn = cx_Oracle.makedsn(
+            oracle_config['host'],
+            oracle_config['port'],
+            service_name=oracle_config['service_name']
+        )
+        
+        self.connection_string = f"{oracle_config['username']}/{oracle_config['password']}@{dsn}"
+        self.logger.info(f"Using Oracle database: {oracle_config['host']}:{oracle_config['port']}")
+    
+    @contextmanager
+    def get_connection(self):
+        """Get database connection with context manager"""
+        connection = None
         try:
-            dsn = cx_Oracle.makedsn(
-                self.oracle_config["host"],
-                self.oracle_config["port"],
-                service_name=self.oracle_config["service_name"]
-            )
+            if self.db_type == 'sqlite':
+                connection = sqlite3.connect(self.connection_string)
+                connection.row_factory = sqlite3.Row
+            elif self.db_type == 'oracle':
+                connection = cx_Oracle.connect(self.connection_string)
             
-            self.connection = cx_Oracle.connect(
-                user=self.oracle_config["username"],
-                password=self.oracle_config["password"],
-                dsn=dsn
-            )
+            yield connection
             
         except Exception as e:
-            raise Exception(f"Oracle initialization failed: {e}")
-            
+            if connection:
+                connection.rollback()
+            self.logger.error(f"Database connection error: {e}")
+            raise ConnectionError(f"Database connection failed: {e}")
+        finally:
+            if connection:
+                connection.close()
+    
     def _create_tables(self):
-        """Create database tables"""
-        if self.db_type.lower() == "oracle":
-            self._create_oracle_tables()
-        else:
-            self._create_sqlite_tables()
-            
-    def _create_sqlite_tables(self):
-        """Create SQLite tables"""
+        """Create necessary database tables"""
         tables = [
             """
             CREATE TABLE IF NOT EXISTS signatures (
@@ -192,245 +190,252 @@ class DatabaseManager:
                 log_level TEXT NOT NULL,
                 component TEXT NOT NULL,
                 message TEXT NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                extra_data TEXT
+                details TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS threat_intelligence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL,
+                threat_name TEXT,
+                threat_family TEXT,
+                confidence REAL,
+                source TEXT,
+                last_seen TIMESTAMP,
+                detection_count INTEGER DEFAULT 1,
+                total_scans INTEGER DEFAULT 1,
+                metadata TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(file_hash, source)
             )
             """
         ]
         
-        cursor = self.connection.cursor()
-        for table_sql in tables:
-            cursor.execute(table_sql)
-        self.connection.commit()
-        
-    def _create_oracle_tables(self):
-        """Create Oracle tables"""
-        tables = [
-            """
-            CREATE TABLE signatures (
-                id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-                signature_type VARCHAR2(50) NOT NULL,
-                signature_data BLOB NOT NULL,
-                threat_name VARCHAR2(255) NOT NULL,
-                severity VARCHAR2(20) NOT NULL,
-                description CLOB,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            """,
-            """
-            CREATE TABLE hash_signatures (
-                id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-                file_hash VARCHAR2(128) NOT NULL,
-                hash_type VARCHAR2(10) NOT NULL,
-                threat_name VARCHAR2(255) NOT NULL,
-                severity VARCHAR2(20) NOT NULL,
-                source VARCHAR2(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                CONSTRAINT uk_hash_signatures UNIQUE (file_hash, hash_type)
-            )
-            """,
-            """
-            CREATE TABLE scan_results (
-                id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-                file_path VARCHAR2(4000) NOT NULL,
-                file_hash VARCHAR2(128),
-                file_size NUMBER,
-                scan_time NUMBER,
-                threat_score NUMBER(3,2),
-                threat_level VARCHAR2(20),
-                detection_method VARCHAR2(50),
-                scan_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                scan_details CLOB
-            )
-            """,
-            """
-            CREATE TABLE quarantine_items (
-                id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-                quarantine_id VARCHAR2(32) UNIQUE NOT NULL,
-                original_path VARCHAR2(4000) NOT NULL,
-                quarantine_path VARCHAR2(4000) NOT NULL,
-                file_hash VARCHAR2(128),
-                file_size NUMBER,
-                threat_name VARCHAR2(255),
-                detection_method VARCHAR2(50),
-                quarantine_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status VARCHAR2(20) DEFAULT 'QUARANTINED',
-                metadata CLOB
-            )
-            """,
-            """
-            CREATE TABLE system_logs (
-                id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-                log_level VARCHAR2(10) NOT NULL,
-                component VARCHAR2(50) NOT NULL,
-                message CLOB NOT NULL,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                extra_data CLOB
-            )
-            """
+        # Create indexes
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_hash_signatures_hash ON hash_signatures(file_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_scan_results_date ON scan_results(scan_date)",
+            "CREATE INDEX IF NOT EXISTS idx_quarantine_status ON quarantine_items(status)",
+            "CREATE INDEX IF NOT EXISTS idx_threat_intel_hash ON threat_intelligence(file_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_system_logs_timestamp ON system_logs(timestamp)"
         ]
         
-        cursor = self.connection.cursor()
-        for table_sql in tables:
-            try:
-                cursor.execute(table_sql)
-            except Exception as e:
-                if "already exists" not in str(e).lower():
-                    raise
-        self.connection.commit()
-        
-    @contextmanager
-    def get_cursor(self):
-        """Get database cursor with automatic cleanup"""
-        with self.connection_lock:
-            cursor = self.connection.cursor()
-            try:
-                yield cursor
-            finally:
-                cursor.close()
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
                 
-    def execute_query(self, query: str, params: Optional[Union[tuple, dict]] = None) -> List[Dict]:
+                # Create tables
+                for table_sql in tables:
+                    cursor.execute(table_sql)
+                
+                # Create indexes
+                for index_sql in indexes:
+                    cursor.execute(index_sql)
+                
+                conn.commit()
+                self.logger.info("Database tables created successfully")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to create tables: {e}")
+            raise DatabaseError(f"Table creation failed: {e}")
+    
+    def execute_query(self, query: str, params: Optional[Union[Tuple, Dict]] = None) -> List[Dict]:
         """Execute SELECT query and return results"""
         try:
-            with self.get_cursor() as cursor:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
                 if params:
                     cursor.execute(query, params)
                 else:
                     cursor.execute(query)
-                    
-                columns = [desc[0] for desc in cursor.description]
-                results = []
                 
-                for row in cursor.fetchall():
-                    results.append(dict(zip(columns, row)))
-                    
+                if self.db_type == 'sqlite':
+                    columns = [description[0] for description in cursor.description]
+                    results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                else:  # Oracle
+                    columns = [col[0] for col in cursor.description]
+                    results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+                
                 return results
                 
         except Exception as e:
             self.logger.error(f"Query execution failed: {e}")
-            return []
-            
-    def execute_command(self, command: str, params: Optional[Union[tuple, dict]] = None) -> bool:
-        """Execute INSERT/UPDATE/DELETE command"""
+            raise QueryError(f"Query failed: {e}", query=query)
+    
+    def execute_command(self, command: str, params: Optional[Union[Tuple, Dict]] = None) -> int:
+        """Execute INSERT/UPDATE/DELETE command and return affected rows"""
         try:
-            with self.get_cursor() as cursor:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
                 if params:
                     cursor.execute(command, params)
                 else:
                     cursor.execute(command)
-                    
-                self.connection.commit()
-                return True
+                
+                conn.commit()
+                return cursor.rowcount
                 
         except Exception as e:
             self.logger.error(f"Command execution failed: {e}")
-            self.connection.rollback()
+            raise QueryError(f"Command failed: {e}", query=command)
+    
+    def insert_signature(self, signature_type: str, signature_data: bytes, 
+                        threat_name: str, severity: str, description: str = None) -> int:
+        """Insert new signature into database"""
+        query = """
+            INSERT INTO signatures (signature_type, signature_data, threat_name, severity, description)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        params = (signature_type, signature_data, threat_name, severity, description)
+        
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, params)
+                conn.commit()
+                return cursor.lastrowid
+        except Exception as e:
+            self.logger.error(f"Failed to insert signature: {e}")
+            raise DatabaseError(f"Signature insertion failed: {e}")
+    
+    def insert_hash_signature(self, file_hash: str, hash_type: str, 
+                             threat_name: str, severity: str, source: str = None) -> bool:
+        """Insert hash signature with conflict handling"""
+        query = """
+            INSERT OR REPLACE INTO hash_signatures 
+            (file_hash, hash_type, threat_name, severity, source)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        params = (file_hash, hash_type, threat_name, severity, source)
+        
+        try:
+            self.execute_command(query, params)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to insert hash signature: {e}")
             return False
-            
-    def store_scan_result(self, result_data: Dict) -> bool:
-        """Store scan result in database"""
+    
+    def get_hash_signature(self, file_hash: str, hash_type: str = None) -> Optional[Dict]:
+        """Get hash signature by hash value"""
+        if hash_type:
+            query = "SELECT * FROM hash_signatures WHERE file_hash = ? AND hash_type = ?"
+            params = (file_hash, hash_type)
+        else:
+            query = "SELECT * FROM hash_signatures WHERE file_hash = ?"
+            params = (file_hash,)
+        
+        results = self.execute_query(query, params)
+        return results[0] if results else None
+    
+    def insert_scan_result(self, file_path: str, file_hash: str, file_size: int,
+                          scan_time: float, threat_score: float, threat_level: str,
+                          detection_method: str, scan_details: Dict = None) -> int:
+        """Insert scan result into database"""
         query = """
-        INSERT INTO scan_results 
-        (file_path, file_hash, file_size, scan_time, threat_score, 
-         threat_level, detection_method, scan_details)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO scan_results 
+            (file_path, file_hash, file_size, scan_time, threat_score, 
+             threat_level, detection_method, scan_details)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """
         
-        params = (
-            result_data.get('file_path'),
-            result_data.get('file_hash'),
-            result_data.get('file_size'),
-            result_data.get('scan_time'),
-            result_data.get('threat_score'),
-            result_data.get('threat_level'),
-            result_data.get('detection_method'),
-            str(result_data.get('metadata', {}))
-        )
+        details_json = json.dumps(scan_details) if scan_details else None
+        params = (file_path, file_hash, file_size, scan_time, threat_score,
+                 threat_level, detection_method, details_json)
         
-        return self.execute_command(query, params)
-        
-    def store_quarantine_item(self, quarantine_data: Dict) -> bool:
-        """Store quarantine item in database"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, params)
+                conn.commit()
+                return cursor.lastrowid
+        except Exception as e:
+            self.logger.error(f"Failed to insert scan result: {e}")
+            raise DatabaseError(f"Scan result insertion failed: {e}")
+    
+    def get_scan_statistics(self, days: int = 30) -> Dict[str, Any]:
+        """Get scan statistics for the specified number of days"""
         query = """
-        INSERT INTO quarantine_items 
-        (quarantine_id, original_path, quarantine_path, file_hash, 
-         file_size, threat_name, detection_method, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            SELECT 
+                COUNT(*) as total_scans,
+                COUNT(CASE WHEN threat_level != 'clean' THEN 1 END) as threats_found,
+                AVG(scan_time) as avg_scan_time,
+                MAX(scan_date) as last_scan
+            FROM scan_results 
+            WHERE scan_date >= datetime('now', '-{} days')
+        """.format(days)
+        
+        results = self.execute_query(query)
+        return results[0] if results else {}
+    
+    def cleanup_old_records(self, table: str, date_column: str, retention_days: int) -> int:
+        """Clean up old records from specified table"""
+        query = f"""
+            DELETE FROM {table} 
+            WHERE {date_column} < datetime('now', '-{retention_days} days')
         """
         
-        params = (
-            quarantine_data.get('quarantine_id'),
-            quarantine_data.get('original_path'),
-            quarantine_data.get('quarantine_path'),
-            quarantine_data.get('file_hash'),
-            quarantine_data.get('file_size'),
-            quarantine_data.get('threat_name'),
-            quarantine_data.get('detection_method'),
-            str(quarantine_data.get('metadata', {}))
-        )
-        
-        return self.execute_command(query, params)
-        
-    def get_scan_statistics(self) -> Dict[str, Any]:
-        """Get scan statistics from database"""
-        queries = {
-            'total_scans': "SELECT COUNT(*) as count FROM scan_results",
-            'threats_detected': "SELECT COUNT(*) as count FROM scan_results WHERE threat_level != 'clean'",
-            'quarantined_files': "SELECT COUNT(*) as count FROM quarantine_items WHERE status = 'QUARANTINED'",
-            'recent_scans': """
-                SELECT COUNT(*) as count FROM scan_results 
-                WHERE scan_date > datetime('now', '-24 hours')
-            """ if self.db_type == 'sqlite' else """
-                SELECT COUNT(*) as count FROM scan_results 
-                WHERE scan_date > SYSDATE - 1
-            """
+        try:
+            return self.execute_command(query)
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup old records from {table}: {e}")
+            return 0
+    
+    def get_database_info(self) -> Dict[str, Any]:
+        """Get database information and statistics"""
+        info = {
+            'database_type': self.db_type,
+            'connection_string': self.connection_string if self.db_type == 'sqlite' else '[REDACTED]',
+            'tables': {}
         }
         
-        stats = {}
-        for key, query in queries.items():
-            try:
-                result = self.execute_query(query)
-                stats[key] = result[0]['count'] if result else 0
-            except Exception as e:
-                self.logger.error(f"Failed to get {key}: {e}")
-                stats[key] = 0
-                
-        return stats
+        # Get table statistics
+        tables = ['signatures', 'hash_signatures', 'scan_results', 'quarantine_items', 
+                 'system_logs', 'threat_intelligence']
         
-    def cleanup_old_records(self, days: int = 30) -> bool:
-        """Clean up old database records"""
+        for table in tables:
+            try:
+                count_query = f"SELECT COUNT(*) as count FROM {table}"
+                result = self.execute_query(count_query)
+                info['tables'][table] = result[0]['count'] if result else 0
+            except Exception as e:
+                self.logger.debug(f"Could not get count for table {table}: {e}")
+                info['tables'][table] = 'unknown'
+        
+        return info
+    
+    def backup_database(self, backup_path: str) -> bool:
+        """Create database backup"""
         try:
             if self.db_type == 'sqlite':
-                queries = [
-                    f"DELETE FROM scan_results WHERE scan_date < datetime('now', '-{days} days')",
-                    f"DELETE FROM system_logs WHERE timestamp < datetime('now', '-{days} days')"
-                ]
+                import shutil
+                shutil.copy2(self.connection_string, backup_path)
+                self.logger.info(f"Database backed up to: {backup_path}")
+                return True
             else:
-                queries = [
-                    f"DELETE FROM scan_results WHERE scan_date < SYSDATE - {days}",
-                    f"DELETE FROM system_logs WHERE timestamp < SYSDATE - {days}"
-                ]
-                
-            for query in queries:
-                self.execute_command(query)
-                
-            self.logger.info(f"Cleaned up records older than {days} days")
-            return True
-            
+                self.logger.warning("Database backup not implemented for Oracle")
+                return False
         except Exception as e:
-            self.logger.error(f"Cleanup failed: {e}")
+            self.logger.error(f"Database backup failed: {e}")
             return False
-            
-    def close(self):
-        """Close database connection"""
+    
+    def vacuum_database(self) -> bool:
+        """Optimize database (SQLite only)"""
         try:
-            if self.connection:
-                self.connection.close()
-                self.logger.info("Database connection closed")
+            if self.db_type == 'sqlite':
+                with self.get_connection() as conn:
+                    conn.execute("VACUUM")
+                    conn.commit()
+                self.logger.info("Database vacuumed successfully")
+                return True
+            else:
+                self.logger.info("Database vacuum not applicable for Oracle")
+                return True
         except Exception as e:
-            self.logger.error(f"Error closing database: {e}")
-
+            self.logger.error(f"Database vacuum failed: {e}")
+            return False
 
 # Global database manager instance
 db_manager = DatabaseManager()
